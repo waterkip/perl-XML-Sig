@@ -103,6 +103,19 @@ $xp->registerNs($_, $ns{$_}) foreach keys %ns;
 my $nodes = $xp->findnodes('//ds:Signature');
 is($nodes->size, 1, "Found only one signature node");
 my $node = $nodes->get_node(1);
-is($node->nodePath, '/md:EntityDescriptor/dsig:Signature', ".. and on the correct node path");
+is(
+    $node->nodePath,
+    '/md:EntityDescriptor/dsig:Signature',
+    ".. and on the correct node path"
+);
+
+$nodes = $xp->findnodes('//ds:Reference');
+is($nodes->size, 1, "Found a reference node");
+$node = $nodes->get_node(1);
+is(
+    $node->getAttribute("URI"),
+    '#_8f32b973-729a-48fd-9275-0887f06e1cc8',
+    '.. and has the correct value'
+);
 
 done_testing;
