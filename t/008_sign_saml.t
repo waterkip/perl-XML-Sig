@@ -105,4 +105,10 @@ is($nodes->size, 1, "Found only one signature node");
 my $node = $nodes->get_node(1);
 is($node->nodePath, '/md:EntityDescriptor/dsig:Signature', ".. and on the correct node path");
 
+{
+    my $nodes = $xp->findnodes('//ds:CanonicalizationMethod');
+    my $node = $nodes->get_node(1);
+    is($node->getAttribute('Algorithm'), "http://www.w3.org/2001/10/xml-exc-c14n#")
+}
+
 done_testing;
