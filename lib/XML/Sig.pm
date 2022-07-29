@@ -399,18 +399,28 @@ sub sign {
 
         # Calculate the signature of the Canonical Form of SignedInfo
         my $signature;
-        if ($self->{key_type} eq 'dsa') {
-            $signature = encode_base64( $self->_calc_dsa_signature( $signed_info_canon ), "\n" );
-        } elsif ($self->{key_type} eq 'ecdsa') {
-            $signature = encode_base64( $self->_calc_ecdsa_signature( $signed_info_canon ), "\n" );
-        } elsif ($self->{key_type} eq 'rsa') {
-            $signature = encode_base64( $self->_calc_rsa_signature( $signed_info_canon ), "\n" );
-        } else {
-            if ( defined $self->{ hmac_key } ) {
-                $signature = encode_base64( $self->_calc_hmac_signature( $signed_info_canon ), "\n" );
-            } else {
-                die "No Signature signing method provided";
-            }
+        my $keytype = $self->{key_type};
+
+        if ($keytype eq 'dsa') {
+            $signature
+                = encode_base64($self->_calc_dsa_signature($signed_info_canon),
+                "\n");
+        }
+        elsif ($keytype eq 'ecdsa') {
+            $signature = encode_base64(
+                $self->_calc_ecdsa_signature($signed_info_canon), "\n");
+        }
+        elsif ($keytype eq 'rsa') {
+            $signature
+                = encode_base64($self->_calc_rsa_signature($signed_info_canon),
+                "\n");
+        }
+        elsif (defined $self->{hmac_key}) {
+            $signature = encode_base64(
+                $self->_calc_hmac_signature($signed_info_canon), "\n");
+        }
+        else {
+            die "No Signature signing method provided";
         }
 
         # Add the Signature to the SignatureValue
