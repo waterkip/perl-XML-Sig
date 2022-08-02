@@ -2,7 +2,7 @@ use strict;
 use warnings;
 
 package XML::Sig;
-# VERSION
+our $VERSION = '0.59';
 
 use Encode;
 # ABSTRACT: XML::Sig - A toolkit to help sign and verify XML Digital Signatures
