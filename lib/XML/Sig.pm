@@ -2,6 +2,9 @@ use strict;
 use warnings;
 
 package XML::Sig;
+use Crypt::OpenSSL::Bignum;
+use Crypt::OpenSSL::RSA;
+
 # VERSION
 
 use Encode;

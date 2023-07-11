@@ -1,0 +1,96 @@
+<?xml version="1.0"?>
+<saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:dsig="http://www.w3.org/2000/09/xmldsig#" Destination="http://ct.local/saml/consumer-post" ID="NETSAML2_f3d3f261b1fa2d016cf9ac5c04a14b35d4ce1b2f0cdaa07d88810179ba5ddd63" InResponseTo="NETSAML2_fbc77ac234f66e0fefc1c54bfefcf6a58efc37eb31d7daa87faeb00ecf1536c7" IssueInstant="2023-07-07T19:22:01Z" Version="2.0">
+  <saml2:Issuer xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">http://sso.dev.venda.com/opensso</saml2:Issuer>
+  <dsig:Signature>
+    <dsig:SignedInfo xmlns:xenc="http://www.w3.org/2001/04/xmlenc#">
+      <dsig:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+      <dsig:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+      <dsig:Reference URI="#NETSAML2_f3d3f261b1fa2d016cf9ac5c04a14b35d4ce1b2f0cdaa07d88810179ba5ddd63">
+        <dsig:Transforms>
+          <dsig:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+          <dsig:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+        </dsig:Transforms>
+        <dsig:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+        <dsig:DigestValue>6VBuxSxlyASbFQq+dyoYFR3kBb0CDW0RkXBt0R6WZAI=</dsig:DigestValue>
+      </dsig:Reference>
+    </dsig:SignedInfo>
+    <dsig:SignatureValue>RJ+iFaTqKI9LbgFAM3Jnr/4H0In/2X4bORmIneIFnqME+AN65p/7HnvDkMWQ8FomFYgrYvNpQRMB
+khgifhoT+egRFt4H4xClY5GqmxdXekHcZgBa1pOm6HLTpBv0EjMPsv9cbtk6KNiTBDnlr/AwdMrt
+IaH1Q6hYLBdgGoe+EdE=
+</dsig:SignatureValue>
+    <dsig:KeyInfo>
+      <dsig:KeyValue>
+        <dsig:RSAKeyValue>
+          <dsig:Modulus>yG6klmm+7WbrKz4itaubekr6ifBEBgLKuBDRHIrZwdtUsVuMGpOMqe34+JVudk9lROy2RX2iKNkZC9ozL2KeAm6uwgJRDOY59hEObiz2AUkk4dQZici1GGni6PcShZbJfwjoyv6Df+82A0W8PlL0vseTWZLDxKc+VuVkBaUVTBc=</dsig:Modulus>
+          <dsig:Exponent>AQAB</dsig:Exponent>
+        </dsig:RSAKeyValue>
+      </dsig:KeyValue>
+    </dsig:KeyInfo>
+  </dsig:Signature>
+  <saml2p:Status>
+    <saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+  </saml2p:Status>
+  <saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="NETSAML2_89b59eeb14e342be6f428c071b95d636fe5855af170a265baf9e015d71f4d030" IssueInstant="2023-07-07T19:22:01Z" Version="2.0">
+    <saml2:Issuer>http://sso.dev.venda.com/opensso</saml2:Issuer>
+    <dsig:Signature>
+      <dsig:SignedInfo xmlns:xenc="http://www.w3.org/2001/04/xmlenc#">
+        <dsig:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+        <dsig:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+        <dsig:Reference URI="#NETSAML2_89b59eeb14e342be6f428c071b95d636fe5855af170a265baf9e015d71f4d030">
+          <dsig:Transforms>
+            <dsig:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+            <dsig:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+          </dsig:Transforms>
+          <dsig:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+          <dsig:DigestValue>Qgj7QCwtX5Bk7zjLk2B2RmON6jDr3G5gq1ZHd1Elv2o=</dsig:DigestValue>
+        </dsig:Reference>
+      </dsig:SignedInfo>
+      <dsig:SignatureValue>as5aDgyxko1ajj4jWqY9IKspPT3A1o5cGdK/8+iflpzaZj3I4tdvp20/NdvktYre5E8DuMow0yYG
+BUzaVD5hCLAVFvg94puhog5ij1s1USBJfZ6NFbDICDj/B2FXOnVQ1WJ4L1slhIDu99b/3NzQTra+
+LdRSpKB5plZ0E8CuBRs=
+</dsig:SignatureValue>
+      <dsig:KeyInfo>
+        <dsig:KeyValue>
+          <dsig:RSAKeyValue>
+            <dsig:Modulus>yG6klmm+7WbrKz4itaubekr6ifBEBgLKuBDRHIrZwdtUsVuMGpOMqe34+JVudk9lROy2RX2iKNkZC9ozL2KeAm6uwgJRDOY59hEObiz2AUkk4dQZici1GGni6PcShZbJfwjoyv6Df+82A0W8PlL0vseTWZLDxKc+VuVkBaUVTBc=</dsig:Modulus>
+            <dsig:Exponent>AQAB</dsig:Exponent>
+          </dsig:RSAKeyValue>
+        </dsig:KeyValue>
+      </dsig:KeyInfo>
+    </dsig:Signature>
+    <saml2:Subject>
+      <saml2:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">timlegge@cpan.org</saml2:NameID>
+      <saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+        <saml2:SubjectConfirmationData InResponseTo="NETSAML2_fbc77ac234f66e0fefc1c54bfefcf6a58efc37eb31d7daa87faeb00ecf1536c7" NotOnOrAfter="2023-07-07T19:38:41" Recipient="http://ct.local/saml/consumer-post"/>
+      </saml2:SubjectConfirmation>
+    </saml2:Subject>
+    <saml2:Conditions NotBefore="2023-07-07T19:22:01Z" NotOnOrAfter="2023-07-07T19:38:41">
+      <saml2:AudienceRestriction>
+        <saml2:Audience>http://ct.local/saml/consumer-post</saml2:Audience>
+      </saml2:AudienceRestriction>
+    </saml2:Conditions>
+    <saml2:AttributeStatement>
+      <saml2:Attribute Name="Email">
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">timlegge@cpan.org</saml2:AttributeValue>
+      </saml2:Attribute>
+      <saml2:Attribute Name="fname">
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">Timothy</saml2:AttributeValue>
+      </saml2:Attribute>
+      <saml2:Attribute Name="lname">
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">Legge</saml2:AttributeValue>
+      </saml2:Attribute>
+      <saml2:Attribute Name="phone">
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">4408675309</saml2:AttributeValue>
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">4408675310</saml2:AttributeValue>
+      </saml2:Attribute>
+      <saml2:Attribute Name="title">
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">Developer</saml2:AttributeValue>
+      </saml2:Attribute>
+    </saml2:AttributeStatement>
+    <saml2:AuthnStatement AuthnInstant="2023-07-07T19:22:01Z" SessionIndex="NETSAML2_89b59eeb14e342be6f428c071b95d636fe5855af170a265baf9e015d71f4d030">
+      <saml2:AuthnContext>
+        <saml2:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified</saml2:AuthnContextClassRef>
+      </saml2:AuthnContext>
+    </saml2:AuthnStatement>
+  </saml2:Assertion>
+</saml2p:Response>

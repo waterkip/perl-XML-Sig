@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<saml2p:Response xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:dsig="http://www.w3.org/2000/09/xmldsig#" Destination="http://ct.local/saml/consumer-post" ID="NETSAML2_f3d3f261b1fa2d016cf9ac5c04a14b35d4ce1b2f0cdaa07d88810179ba5ddd63" InResponseTo="NETSAML2_fbc77ac234f66e0fefc1c54bfefcf6a58efc37eb31d7daa87faeb00ecf1536c7" IssueInstant="2023-07-07T19:22:01Z" Version="2.0">
+  <saml2:Issuer xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">http://sso.dev.venda.com/opensso</saml2:Issuer>
+  <saml2p:Status>
+    <saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+  </saml2p:Status>
+  <saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="NETSAML2_89b59eeb14e342be6f428c071b95d636fe5855af170a265baf9e015d71f4d030" IssueInstant="2023-07-07T19:22:01Z" Version="2.0">
+    <saml2:Issuer>http://sso.dev.venda.com/opensso</saml2:Issuer>
+    <saml2:Subject>
+      <saml2:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">timlegge@cpan.org</saml2:NameID>
+      <saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+        <saml2:SubjectConfirmationData InResponseTo="NETSAML2_fbc77ac234f66e0fefc1c54bfefcf6a58efc37eb31d7daa87faeb00ecf1536c7" NotOnOrAfter="2023-07-07T19:38:41" Recipient="http://ct.local/saml/consumer-post"/>
+      </saml2:SubjectConfirmation>
+    </saml2:Subject>
+    <saml2:Conditions NotBefore="2023-07-07T19:22:01Z" NotOnOrAfter="2023-07-07T19:38:41">
+      <saml2:AudienceRestriction>
+        <saml2:Audience>http://ct.local/saml/consumer-post</saml2:Audience>
+      </saml2:AudienceRestriction>
+    </saml2:Conditions>
+    <saml2:AttributeStatement>
+      <saml2:Attribute Name="Email">
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">timlegge@cpan.org</saml2:AttributeValue>
+      </saml2:Attribute>
+      <saml2:Attribute Name="fname">
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">Timothy</saml2:AttributeValue>
+      </saml2:Attribute>
+      <saml2:Attribute Name="lname">
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">Legge</saml2:AttributeValue>
+      </saml2:Attribute>
+      <saml2:Attribute Name="phone">
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">4408675309</saml2:AttributeValue>
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">4408675310</saml2:AttributeValue>
+      </saml2:Attribute>
+      <saml2:Attribute Name="title">
+        <saml2:AttributeValue xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="xs:anyType">Developer</saml2:AttributeValue>
+      </saml2:Attribute>
+    </saml2:AttributeStatement>
+    <saml2:AuthnStatement AuthnInstant="2023-07-07T19:22:01Z" SessionIndex="NETSAML2_89b59eeb14e342be6f428c071b95d636fe5855af170a265baf9e015d71f4d030">
+      <saml2:AuthnContext>
+        <saml2:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:unspecified</saml2:AuthnContextClassRef>
+      </saml2:AuthnContext>
+    </saml2:AuthnStatement>
+  </saml2:Assertion>
+</saml2p:Response>

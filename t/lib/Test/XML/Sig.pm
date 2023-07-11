@@ -9,6 +9,7 @@ use Test::Lib;
 use Import::Into;
 require Test::More;
 require Test::XML::Sig::Util;
+require Test::Deep;
 require XML::Sig;
 
 sub import {
@@ -20,6 +21,7 @@ sub import {
         strict
         warnings
         Test::More
+        Test::Deep
         XML::Sig
     );
 
