@@ -2,13 +2,13 @@ use strict;
 use warnings;
 
 package XML::Sig;
-use Crypt::OpenSSL::Bignum;
-use Crypt::OpenSSL::RSA;
 
 # VERSION
 
-use Encode;
+use Encode qw(encode_utf8);
+
 # ABSTRACT: XML::Sig - A toolkit to help sign and verify XML Digital Signatures
+
 =head1 NAME
 
 XML::Sig - A toolkit to help sign and verify XML Digital Signatures.
@@ -69,11 +69,16 @@ XML::Sig->mk_accessors(qw(key));
 
 =cut
 
-use Digest::SHA qw(sha1 sha224 sha256 sha384 sha512 hmac_sha1 hmac_sha256 hmac_sha384 hmac_sha512);
-use Crypt::Digest::RIPEMD160 qw/ripemd160/;
-use XML::LibXML;
-use MIME::Base64;
 use Carp;
+use Crypt::Digest::RIPEMD160 qw/ripemd160/;
+use Crypt::OpenSSL::Bignum;
+use Crypt::OpenSSL::RSA;
+use Digest::SHA
+    qw(sha1 sha224 sha256 sha384 sha512 hmac_sha1 hmac_sha256 hmac_sha384 hmac_sha512);
+use List::Util qw(any none);
+use MIME::Base64;
+use XML::LibXML;
+use feature qw(state);
 
 =head1 USAGE
 
@@ -119,19 +124,19 @@ This module supports the following canonicalization methods and transforms:
 
 =cut
 
-use constant TRANSFORM_ENV_SIG           => 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
-use constant TRANSFORM_C14N              => 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
-use constant TRANSFORM_C14N_COMMENTS     => 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments';
-use constant TRANSFORM_C14N_V1_1         => 'http://www.w3.org/TR/2008/REC-xml-c14n11-20080502';
-use constant TRANSFORM_C14N_V1_1_COMMENTS => 'http://www.w3.org/TR/2008/REC-xml-c14n11-20080502#WithComments';
-use constant TRANSFORM_EXC_C14N          => 'http://www.w3.org/2001/10/xml-exc-c14n#';
-use constant TRANSFORM_EXC_C14N_COMMENTS => 'http://www.w3.org/2001/10/xml-exc-c14n#WithComments';
-
-sub DESTROY { }
-
-$| = 1;  # autoflush
-
-
+use constant TRANSFORM_ENV_SIG =>
+    'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
+use constant TRANSFORM_C14N =>
+    'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+use constant TRANSFORM_C14N_COMMENTS =>
+    'http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments';
+use constant TRANSFORM_C14N_V1_1 =>
+    'http://www.w3.org/TR/2008/REC-xml-c14n11-20080502';
+use constant TRANSFORM_C14N_V1_1_COMMENTS =>
+    'http://www.w3.org/TR/2008/REC-xml-c14n11-20080502#WithComments';
+use constant TRANSFORM_EXC_C14N => 'http://www.w3.org/2001/10/xml-exc-c14n#';
+use constant TRANSFORM_EXC_C14N_COMMENTS =>
+    'http://www.w3.org/2001/10/xml-exc-c14n#WithComments';
 
 =head2 OPTIONS
 
@@ -227,75 +232,192 @@ Constructor; see OPTIONS above.
 =cut
 
 sub new {
-    my $class = shift;
+    my $class  = shift;
     my $params = shift;
-    my $self = {};
-    foreach my $prop ( qw/ key cert cert_text ns id_attr/ ) {
-        if ( exists $params->{ $prop } ) {
-            $self->{ $prop } = $params->{ $prop };
-        }
-#        else {
-#            confess "You need to provide the $prop parameter!";
-#        }
-    }
+    my $self   = {};
+
     bless $self, $class;
-    $self->{ 'x509' } = exists $params->{ x509 } ? 1 : 0;
-    if ( exists $params->{ key_name } ) {
-        $self->{ key_name } = $params->{ key_name };
-    }
-    if ( exists $params->{ 'key' } ) {
-        $self->_load_key( $params->{ 'key' } );
-    }
-    if ( exists $params->{ 'cert' } ) {
-        $self->_load_cert_file( $params->{ 'cert' } );
-    }
-    if ( exists $params->{ 'cert_text' } ) {
-        $self->_load_cert_text( $params->{ 'cert_text' } );
-    }
-    if ( exists $params->{ 'hmac_key' } ) {
-        $self->_load_hmac_key_info;
+
+    foreach my $prop (qw/key cert cert_text ns id_attr/) {
+        $self->{$prop} = $params->{$prop} if exists $params->{$prop};
     }
 
-    if ( exists $params->{ sig_hash } && grep { $_ eq $params->{ sig_hash } } ('sha224', 'sha256', 'sha384', 'sha512', 'ripemd160'))
+    $self->{x509} = exists $params->{x509} ? 1 : 0;
+
+    my @options = grep { /^(?:cert|cert_text)$/ } keys %$params;
+    croak
+        "You can only supply one argument for cert or cert_text"
+        if @options > 1;
+
+    $self->{key_name} = $params->{key_name} if exists $params->{key_name};
+
+    foreach (qw(key cert cert_text hmac_key)) {
+        next unless exists $params->{$_};
+        my $method = "_load_${_}";
+        $self->$method($params->{$_});
+    }
+
+    $params->{sig_hash} //= 'sha256';
+    if (none { $_ eq $params->{sig_hash} }
+        qw(sha1 sha224 sha256 sha384 sha512 ripemd160'))
     {
-        $self->{ sig_hash } = $params->{ sig_hash };
+        croak "Unknown signature hash option chose: $params->{sig_hash}";
     }
-    else {
-        $self->{ sig_hash } = 'sha256';
-    }
+    $self->{sig_hash} = $params->{sig_hash};
 
-    if ( exists $params->{ digest_hash } && grep { $_ eq $params->{ digest_hash } } ('sha1', 'sha224', 'sha256', 'sha384','sha512', 'ripemd160'))
+    $params->{digest_hash} //= 'sha256';
+    if (none { $_ eq $params->{digest_hash} }
+        qw(sha1 sha224 sha256 sha384 sha512 ripemd160'))
     {
-        $self->{ digest_hash } = $params->{ digest_hash };
+        croak "Unknown digest hash chosen: $params->{digest_hash}";
     }
-    else {
-        $self->{ digest_hash } = 'sha256';
-    }
+    $self->{digest_hash} = $params->{digest_hash};
 
-    if (defined $self->{ key_type } && $self->{ key_type } eq 'dsa') {
-        my $sig_size = $self->{ key_obj }->get_sig_size();
-
+    if (($self->{key_type} //'') eq 'dsa') {
+        my $sig_size = $self->{key_obj}->get_sig_size();
         # The key size dictates the sig size
-        if ( $sig_size eq 48 ) {    # 1024-bit key
-            $self->{ sig_hash } = 'sha1';
-        } else {                    # 2048-bit or 3072-bit key
-            $self->{ sig_hash } = 'sha256';
-        }
+        $self->{sig_hash} = $sig_size eq 48 ? 'sha1' : 'sha256';
     }
 
-    if ( exists $params->{ no_xml_declaration } && $params->{ no_xml_declaration } == 1 ) {
-        $self->{ no_xml_declaration } = 1;
-    } else {
-        $self->{ no_xml_declaration } = 0;
-    }
+    $self->{no_xml_declaration} = exists $params->{no_xml_declaration}
+        && $params->{no_xml_declaration} ? 1 : 0;
 
-    if ( !defined $self->{ key_type } && exists $params->{ hmac_key } ) {
-        $self->{ hmac_key } = $params->{ hmac_key };
-        $self->{ key_type } = 'hmac';
-    }
+    $self->{namespace} = {
+        dsig => "http://www.w3.org/2000/09/xmldsig#",
+        ec   => "http://www.w3.org/2001/10/xml-exc-c14n#",
+    };
 
     return $self;
 }
+
+sub _load_key {
+    my $self = shift;
+    my $file = $self->{key};
+
+    open my $KEY, '<', $file or confess "Could not load key $file: $!";
+    local $/ = undef;
+    my $text = <$KEY>;
+    close $KEY;
+
+    return $self->_load_rsa_key($text)   if $text =~ m/BEGIN RSA PRIVATE KEY/;
+    return $self->_load_dsa_key($text)   if $text =~ m/BEGIN DSA PRIVATE KEY/;
+    return $self->_load_ecdsa_key($text) if $text =~ m/BEGIN EC PRIVATE KEY/;
+    return $self->_load_rsa_key($text)   if $text =~ m/BEGIN PRIVATE KEY/;
+    return $self->_load_x509_key($text)  if $text =~ m/BEGIN CERTIFICATE/;
+    confess "Could not detect type of key $file.";
+}
+
+sub _load_rsa_key {
+    my $self = shift;
+    my ($key_text) = @_;
+
+    eval { require Crypt::OpenSSL::RSA; };
+    confess
+        "Crypt::OpenSSL::RSA needs to be installed so that we can handle RSA keys."
+        if $@;
+
+    my $rsaKey = Crypt::OpenSSL::RSA->new_private_key($key_text);
+
+    confess "did not get a new Crypt::OpenSSL::RSA object" unless $rsaKey;
+    $rsaKey->use_pkcs1_padding();
+    $self->{key_obj}  = $rsaKey;
+    $self->{key_type} = 'rsa';
+    return 1;
+}
+
+sub _load_dsa_key {
+    my $self     = shift;
+    my $key_text = shift;
+
+    eval { require Crypt::OpenSSL::DSA; };
+
+    confess
+        "Crypt::OpenSSL::DSA needs to be installed so that we can handle DSA keys."
+        if $@;
+
+    my $dsa_key = Crypt::OpenSSL::DSA->read_priv_key_str($key_text);
+    confess "did not get a new Crypt::OpenSSL::RSA object" unless $dsa_key;
+
+    $self->{key_type} = 'dsa';
+    $self->{key_obj}  = $dsa_key;
+    return 1;
+}
+
+sub _load_ecdsa_key {
+    my $self     = shift;
+    my $key_text = shift;
+
+    eval { require Crypt::PK::ECC; CryptX->VERSION('0.036'); 1 }
+        or confess "Crypt::PK::ECC 0.036+ needs to be installed so
+             that we can handle ECDSA signatures";
+
+    my $ecdsa_key = Crypt::PK::ECC->new(\$key_text);
+
+    confess "did not get a new Crypt::PK::ECC object" unless $ecdsa_key;
+
+    $self->{key_obj}  = $ecdsa_key;
+    $self->{key_type} = 'ecdsa';
+    return 1;
+}
+
+sub _load_x509_key {
+    my $self     = shift;
+    my $key_text = shift;
+
+    eval { require Crypt::OpenSSL::X509; };
+    confess "Crypt::OpenSSL::X509 needs to be installed so that we
+            can handle X509 Certificates." if $@;
+
+    my $x509Key = Crypt::OpenSSL::X509->new_private_key($key_text);
+    confess "did not get a new Crypt::OpenSSL::X509 object" unless $x509Key;
+
+    $x509Key->use_pkcs1_padding();
+    $self->{key_obj}  = $x509Key;
+    $self->{key_type} = 'x509';
+    return 1;
+}
+
+sub _load_cert {
+    my $self = shift;
+    my $filename = shift;
+
+    open my $CERT, '<', $filename or confess "Could not find certificate file $filename: $!";
+
+    my $text = '';
+    local $/ = undef;
+    $text = <$CERT>;
+    $self->_load_cert_text($text);
+    return;
+}
+
+sub _load_cert_text {
+    my $self = shift;
+    eval { require Crypt::OpenSSL::X509; };
+    confess
+        "Crypt::OpenSSL::X509 needs to be installed so that we can handle X509 certs."
+        if $@;
+
+    my $text = shift;
+
+    my $cert = Crypt::OpenSSL::X509->new_from_string($text);
+    confess "Could not load certificate" unless $cert;
+    $self->{cert_obj} = $cert;
+    $self->{key_type} = 'x509cert';
+    return;
+}
+
+sub _load_hmac_key {
+    my $self = shift;
+    $self->{key_type} = 'hmac';
+    return 1;
+}
+
+sub _log_debug {
+    return unless $DEBUG;
+    my $msg = shift;
+    print STDERR ("$msg\n");
+}
+
 
 =head3 B<sign($xml)>
 
@@ -321,137 +443,275 @@ Returns: string  Signed XML
 
 sub sign {
     my $self = shift;
-    my ($xml) = @_;
+    my $xml  = shift;
 
-    die "You cannot sign XML without a private key." unless $self->key || $self->{ hmac_key };
+    croak "You cannot sign XML without a private key."
+        unless $self->key || $self->{hmac_key};
 
-    local $XML::LibXML::skipXMLDeclaration = $self->{ no_xml_declaration };
+    local $XML::LibXML::skipXMLDeclaration = $self->{no_xml_declaration};
 
-    my $dom = XML::LibXML->load_xml( string => $xml );
+    my $dom = XML::LibXML->load_xml(string => $xml);
+    my $xpc = XML::LibXML::XPathContext->new($dom);
+    $self->{parser} = $xpc;
 
-    $self->{ parser } = XML::LibXML::XPathContext->new($dom);
-    $self->{ parser }->registerNs('dsig', 'http://www.w3.org/2000/09/xmldsig#');
-    $self->{ parser }->registerNs('ec', 'http://www.w3.org/2001/10/xml-exc-c14n#');
-    $self->{ parser }->registerNs('saml', 'urn:oasis:names:tc:SAML:2.0:assertion');
+    foreach (keys %{ $self->{namespace} }) {
+        $xpc->registerNs($_, $self->{namespace}{$_});
+    }
+
     if ($self->{ns}) {
-        foreach (keys %{$self->{ns}}) {
-            $self->{ parser }->registerNs($_, $self->{ns}{$_});
+        foreach (keys %{ $self->{ns} }) {
+            $xpc->registerNs($_, $self->{ns}{$_});
         }
     }
 
-    print ("Signing XML\n") if $DEBUG;
+    my @namespaces = $dom->findnodes('//*')->get_node(1)->getNamespaces();
 
-    my @ids_to_sign = $self->_get_ids_to_sign();
-
-    foreach my $signid (@ids_to_sign) {
-
-        print ("Signing ID $signid\n") if $DEBUG;
-
-        # Temporarily create the Signature XML from the part
-        # TODO: ths section needs a rewrite to create the xml in
-        # a better way.
-
-        # Create a Reference xml fragment including digest section
-        my $digest_xml    = $self->_reference_xml( $signid, "REPLACE DIGEST " . $signid );
-
-        # Create a SignedInfo xml fragment including digest section
-        my $signed_info   = $self->_signedinfo_xml( $digest_xml );
-
-        # Create a Signature xml fragment including SignedInfo section
-        my $signature_xml = $self->_signature_xml( $signed_info, 'REPLACE SIGNATURE ' . $signid );
-
-        print ("Sign ID: $signid\n") if $DEBUG;
-
-        # Get the XML note to sign base on the ID
-        my $xml = $self->_get_xml_to_sign($signid);
-
-        # Canonicalize the XML to http://www.w3.org/2001/10/xml-exc-c14n#
-        # TODO Change the Canonicalization method in the xml fragment from _signedinfo_xml
-        #    <dsig:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature" />
-        #    <dsig:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
-        my $xml_canon        = $xml->toStringEC14N();
-
-        if(my $ref = Digest::SHA->can($self->{ digest_hash })) {
-            $self->{digest_method} = $ref;
+    my $nodes = $self->_get_id_nodes();
+    $nodes->reverse->foreach(
+        sub {
+            $self->sign_node($_, \@namespaces);
         }
-        elsif ( $ref = Crypt::Digest::RIPEMD160->can($self->{ digest_hash }))  {
-            $self->{digest_method} = $ref;
-        }
-        else {
-            die("Can't handle $self->{ digest_hash }");
-        }
-
-        # Calculate the digest of the XML being signed
-        my $bin_digest    = $self->{digest_method}->( Encode::encode_utf8( $xml_canon ));
-        my $digest        = encode_base64( $bin_digest, '' );
-        print ("   Digest: $digest\n") if $DEBUG;
-
-        # Display the ID of the XML being signed for debugging
-        my $reference = $signid; #$self->{parser}->findvalue('//@ID', $xml);
-        print ("   Reference URI: $reference\n") if $DEBUG;
-
-        local $XML::LibXML::skipXMLDeclaration = $self->{ no_xml_declaration };
-
-        my $signature_dom = XML::LibXML->load_xml( string => $signature_xml );
-
-        my $xpath = XML::LibXML::XPathContext->new($signature_dom);
-        $xpath->registerNs('dsig', 'http://www.w3.org/2000/09/xmldsig#');
-        $xpath->registerNs('ec', 'http://www.w3.org/2001/10/xml-exc-c14n#');
-
-        # Canonicalize the SignedInfo to http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments
-        # TODO Change the Canonicalization method in the xml fragment from _signedinfo_xml
-
-        my ($signature_node) = $xpath->findnodes(
-            '/dsig:Signature', $signature_xml);
-        my ($signed_info_node) = $xpath->findnodes(
-            '/dsig:Signature/dsig:SignedInfo',$signature_xml);
-
-        # Add the digest value to the Signed info
-        my ($digest_value_node) = $xpath->findnodes(
-            '/dsig:Signature/dsig:SignedInfo/dsig:Reference/dsig:DigestValue', $signature_xml);
-        $digest_value_node->removeChildNodes();
-        $digest_value_node->appendText($digest);
-
-        # At this point the SignedInfo includes the information
-        # to allow us to use the _canonicalize_xml with the $signature_node
-        my $signed_info_canon = $self->_canonicalize_xml($signed_info_node, $signature_node);
-
-        # Calculate the signature of the Canonical Form of SignedInfo
-        my $signature;
-        if ($self->{key_type} eq 'dsa') {
-            $signature = encode_base64( $self->_calc_dsa_signature( $signed_info_canon ), "\n" );
-        } elsif ($self->{key_type} eq 'ecdsa') {
-            $signature = encode_base64( $self->_calc_ecdsa_signature( $signed_info_canon ), "\n" );
-        } elsif ($self->{key_type} eq 'rsa') {
-            $signature = encode_base64( $self->_calc_rsa_signature( $signed_info_canon ), "\n" );
-        } else {
-            if ( defined $self->{ hmac_key } ) {
-                $signature = encode_base64( $self->_calc_hmac_signature( $signed_info_canon ), "\n" );
-            } else {
-                die "No Signature signing method provided";
-            }
-        }
-
-        # Add the Signature to the SignatureValue
-        my ($signature_value_node) = $xpath->findnodes(
-            '/dsig:Signature/dsig:SignatureValue', $signature_xml);
-        $signature_value_node->removeChildNodes();
-        $signature_value_node->appendText($signature);
-
-        my $set = $xpath->findnodes('dsig:Signature');
-
-        my $node = $set->get_node(1)->cloneNode( 1 );
-
-        my $root = $dom->findnodes("//*[\@ID=\'$signid\']");
-
-        my $loc = $root->shift();
-        $loc->addChild($node);
-
-        print ("\n\n\n SignatureValue:\n" . $signature_value_node . "\n\n\n") if $DEBUG;
-    }
-
+    );
     return $dom->toString;
 }
+
+sub _get_id_nodes {
+    my $self  = shift;
+    my $xpc   = $self->{parser};
+    my $nodes = $xpc->findnodes('//@ID/..');
+    return $nodes unless $self->{attr_id};
+    return scalar $xpc->findnodes("$self->{attr_id}/..", $nodes);
+}
+
+sub sign_node {
+    my $self       = shift;
+    my $node       = shift;
+    my $namespaces = shift;
+
+    my $d = XML::LibXML->createDocument;
+    $self->{d} = $d;
+
+    my $root = $d->createElementNS($self->{namespace}{dsig}, 'dsig:Signature');
+
+    my $si = $d->createElement('dsig:SignedInfo');
+    $root->addChild($si);
+
+    ## TODO: add dsig and xenc namespaces to this node
+    my $cm = $d->createElement('dsig:CanonicalizationMethod');
+    $cm->setAttribute('Algorithm', 'http://www.w3.org/2001/10/xml-exc-c14n#');
+    my $sm = $d->createElement('dsig:SignatureMethod');
+    $sm->setAttribute('Algorithm', $self->get_signing_hash_algo);
+
+    $si->addChild($cm);
+    $si->addChild($sm);
+
+    my $signid = $node->getAttribute('ID');
+
+    my $ref = $d->createElement('dsig:Reference');
+    $si->addChild($ref);
+
+    $ref->setAttribute(URI => "#$signid");
+    my $t = $d->createElement('dsig:Transforms');
+    $ref->addChild($t);
+
+    my @algos = (
+        'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+        'http://www.w3.org/2001/10/xml-exc-c14n#'
+    );
+
+    foreach (@algos) {
+        my $n = $d->createElement('dsig:Transform');
+        $n->setAttribute('Algorithm', "$_");
+        $t->addChild($n);
+    }
+
+    my $dm = $d->createElement('dsig:DigestMethod');
+    $dm->setAttribute("Algorithm", $self->_get_digest_algorith());
+
+    my $tbs = $self->canonicalize_node($node, $namespaces, @algos);
+
+    _log_debug("Canonicalize XML: $tbs");
+
+    my $digest = $self->calculate_digest($tbs);
+    my $dv = $d->createElement('dsig:DigestValue');
+    $dv->appendText($digest);
+
+    $ref->addChild($dm);
+    $ref->addChild($dv);
+
+    my $sv = $d->createElement('dsig:SignatureValue');
+    $root->addChild($sv);
+
+    if(my $key_node = $self->get_key_info) {
+        $root->addChild($key_node);
+    }
+
+    $si->setNamespace($self->{namespace}{dsig}, "dsig", 0);
+
+    _log_debug("SignedInfo: " . $si->toString(2));
+
+    my $sc = $self->canonicalize_node($si, $namespaces, @algos);
+    _log_debug("SignedInfo (Canonicalize): $sc");
+
+    my $sig_method = sprintf('_calc_%s_signature', $self->{key_type});
+
+    my $signature = encode_base64($self->$sig_method($sc), "\n");
+
+    _log_debug("Signature with $self->{key_type} $sig_method\n: $signature");
+
+    $sv->appendText($signature);
+    $ref->setNamespace($self->{namespace}{dsig}, "dsig", 0);
+
+    $node->addChild($root);
+
+}
+
+sub _calc_x509cert_signature {
+    my $self = shift;
+    return 'Undefined signature for now';
+}
+
+sub get_signing_hash_algo {
+    my $self = shift;
+
+    return
+        "http://www.w3.org/2000/09/xmldsig#$self->{key_type}-$self->{sig_hash}"
+        if $self->{sig_hash} eq 'sha1' && $self->{key_type} ne 'ecdsa';
+
+    return
+        "http://www.w3.org/2007/05/xmldsig-more#$self->{key_type}-$self->{sig_hash}"
+        if $self->{key_type} eq 'ecdsa'
+        && any { $_ eq $self->{sig_hash} } qw(ripemd160 whirlpool);
+
+    return
+        "http://www.w3.org/2001/04/xmldsig-more#$self->{key_type}-$self->{sig_hash}"
+        if $self->{key_type} eq 'ecdsa';
+
+    return
+        "http://www.w3.org/2009/xmldsig11#$self->{key_type}-$self->{sig_hash}"
+        if $self->{key_type} eq 'dsa' && $self->{sig_hash} eq 'sha256';
+
+    return
+        "http://www.w3.org/2001/04/xmldsig-more#$self->{key_type}-$self->{sig_hash}";
+}
+
+
+sub canonicalize_node {
+    my $self = shift;
+    my $node = shift;
+    my $namespaces = shift;
+    my @algos = @_;
+
+    my $xml;
+    my $last_alg;
+    foreach my $alg (@algos) {
+        my $x = $self->_transform_node($node, $namespaces, $alg);
+        if ($x) {
+            $xml = $x;
+            $last_alg = $alg;
+        }
+    }
+
+    confess "Unable to canonicalize node" unless $xml;
+
+    local $XML::LibXML::skipXMLDeclaration = 1;
+    my $tn = XML::LibXML->load_xml(string => $xml);
+    return $self->_transform_node($tn, $namespaces, $last_alg);
+
+}
+
+sub _transform_node {
+    my $self       = shift;
+    my $node       = shift;
+    my $namespaces = shift;
+    my $alg        = shift;
+
+    return if $alg eq TRANSFORM_ENV_SIG;
+
+    return $node->toStringC14N()  if $alg eq TRANSFORM_C14N;
+    return $node->toStringC14N(1) if $alg eq TRANSFORM_C14N_COMMENTS;
+
+    # The following code is to circumvent a 11 yo quirck with
+    # XML::LibXML::Element's. For more info see:
+    # https://stackoverflow.com/questions/9296049/error-while-trying-to-canonize-xml-fragments-in-xmllibxml
+
+    my $xml = $self->_transform_node_ec14n($node, $alg);
+    return $xml if $xml;
+
+    # Because we have to circumvent the issue we also need to add the namespace
+    # to the node in order for us to parse it. Annoying but doable. We don't
+    # add namespaces we already have and we don't add a namespace if it does
+    # not exist a child
+    foreach my $ns (@$namespaces) {
+        my @ns     = $node->getNamespaces();
+        my $urn    = $ns->getData;
+        next if any { $_->getData eq $urn } @ns;
+
+        my $prefix = $ns->getLocalName;
+
+        # Test if we have the namespace, unfortunatly we cannot ask the xpc
+        # which namespaces we have registered. But, if we get a prefix which
+        # has a different urn configured we can change the prefix to something
+        # custom and continue as planned. This bit is mostly tested by
+        # t/026_do-not-move-namespace-to-parent.t
+        my $have_urn = $self->{parser}->lookupNs($prefix);
+        if ($have_urn eq $urn) {
+            $self->{parser}->registerNs($prefix, $urn);
+        }
+        else {
+            $prefix = "xml-sig_${prefix}";
+            $self->{parser}->registerNs($prefix, $urn);
+        }
+
+        my $xpath = ".//$prefix:*";
+        next unless $self->{parser}->exists($xpath, $node);
+        $node->setNamespace($urn, $prefix, 0);
+    }
+
+    my $tmp = XML::LibXML->new->parse_string($node->toString);
+    return $self->_transform_node_ec14n($tmp, $alg);
+
+
+}
+
+sub _transform_node_ec14n {
+    my $self = shift;
+    my $node = shift;
+    my $alg  = shift;
+
+    my @prefixlist = $self->_find_prefixlist($node);
+    return $node->toStringEC14N(0, '', \@prefixlist)
+        if $alg eq TRANSFORM_EXC_C14N;
+
+    return $node->toStringEC14N(1, '', \@prefixlist)
+        if $alg eq TRANSFORM_EXC_C14N;
+
+    return;
+
+}
+
+
+sub calculate_digest {
+    my $self = shift;
+    my $xml  = shift;
+
+    my $method     = $self->get_digest_method();
+    my $bin_digest = $method->(encode_utf8($xml));
+    my $digest     = encode_base64($bin_digest, '');
+    return $digest;
+}
+
+sub get_digest_method {
+    my $self = shift;
+    if (my $ref = Digest::SHA->can($self->{digest_hash})) {
+        return $ref;
+    }
+    if (my $ref = Crypt::Digest::RIPEMD160->can($self->{digest_hash})) {
+        return $ref;
+    }
+    croak("Cannot resolv digest method for $self->{ digest_hash }");
+}
+
 
 =head3 B<verify($xml)>
 
@@ -480,44 +740,50 @@ sub verify {
     delete $self->{signer_cert};
     my $xml = shift;
 
-    my $dom = XML::LibXML->load_xml( string => $xml );
+    my $dom = XML::LibXML->load_xml(string => $xml);
 
-    $self->{ parser } = XML::LibXML::XPathContext->new($dom);
-    $self->{ parser }->registerNs('dsig', 'http://www.w3.org/2000/09/xmldsig#');
-    $self->{ parser }->registerNs('ec', 'http://www.w3.org/2001/10/xml-exc-c14n#');
-    $self->{ parser }->registerNs('saml', 'urn:oasis:names:tc:SAML:2.0:assertion');
-    $self->{ parser }->registerNs('ecdsa', 'http://www.w3.org/2001/04/xmldsig-more#');
+    $self->{parser} = XML::LibXML::XPathContext->new($dom);
+    $self->{parser}->registerNs('dsig', 'http://www.w3.org/2000/09/xmldsig#');
+    $self->{parser}
+        ->registerNs('ec', 'http://www.w3.org/2001/10/xml-exc-c14n#');
+    $self->{parser}
+        ->registerNs('saml', 'urn:oasis:names:tc:SAML:2.0:assertion');
+    $self->{parser}
+        ->registerNs('ecdsa', 'http://www.w3.org/2001/04/xmldsig-more#');
 
-    my $signature_nodeset = $self->{ parser }->findnodes('//dsig:Signature');
+    my $signature_nodeset = $self->{parser}->findnodes('//dsig:Signature');
 
     my $key_to_verify;
     if ($self->{id_attr}) {
         if ($self->{ns}) {
-            foreach (keys %{$self->{ns}}) {
-                $self->{ parser }->registerNs($_, $self->{ns}{$_});
+            foreach (keys %{ $self->{ns} }) {
+                $self->{parser}->registerNs($_, $self->{ns}{$_});
             }
         }
         $key_to_verify = $self->_get_ids_to_sign();
     }
 
     my $numsigs = $signature_nodeset->size();
-    print ("NodeSet Size: $numsigs\n") if $DEBUG;
+    print("NodeSet Size: $numsigs\n") if $DEBUG;
 
     # Loop through each Signature in the document checking each
     my $i;
     while (my $signature_node = $signature_nodeset->shift()) {
         $i++;
-        print ("\nSignature $i\n") if $DEBUG;
+        print("\nSignature $i\n") if $DEBUG;
 
         # Get SignedInfo Reference ID
-        my $reference = $self->{ parser }->findvalue(
-            'dsig:SignedInfo/dsig:Reference/@URI', $signature_node);
+        my $reference
+            = $self->{parser}->findvalue('dsig:SignedInfo/dsig:Reference/@URI',
+            $signature_node);
         $reference =~ s/#//g;
 
         print("   Reference URI: $reference\n") if $DEBUG;
 
         if ($key_to_verify && $key_to_verify ne $reference) {
-            print ("Skipping reference URI: $reference, does not match required option\n") if $DEBUG;
+            print(
+                "Skipping reference URI: $reference, does not match required option\n"
+            ) if $DEBUG;
             next;
         }
 
@@ -525,8 +791,10 @@ sub verify {
         # if not disregard it and look for another signature
         # TODO check to ensure that if there is only a single reference
         # like this it won't accidentally validate
-        if (! $self->{ parser }->findvalue('//*[@ID=\''. $reference . '\']')) {
-            print ("   Signature reference $reference is not signing anything in this xml\n") if $DEBUG;
+        if (!$self->{parser}->findvalue('//*[@ID=\'' . $reference . '\']')) {
+            print(
+                "   Signature reference $reference is not signing anything in this xml\n"
+            ) if $DEBUG;
             if ($numsigs <= 1) {
                 return 0;
             }
@@ -536,54 +804,72 @@ sub verify {
         }
 
         # Get SignedInfo DigestMethod Algorithim
-        my $digest_method = $self->{ parser }->findvalue(
-                'dsig:SignedInfo/dsig:Reference/dsig:DigestMethod/@Algorithm', $signature_node);
+        my $digest_method
+            = $self->{parser}->findvalue(
+            'dsig:SignedInfo/dsig:Reference/dsig:DigestMethod/@Algorithm',
+            $signature_node);
         $digest_method =~ s/^.*[#]//;
-        print ("   Digest Method: $digest_method\n") if $DEBUG;
+        print("   Digest Method: $digest_method\n") if $DEBUG;
 
         # Get the DigestValue used to verify Canonical XML
         # Note that the digest may have embedded newlines in the XML
         # Decode the base64 and encode it with no newlines
-        my $refdigest = encode_base64(decode_base64(_trim($self->{ parser }->findvalue(
-                'dsig:SignedInfo/dsig:Reference/dsig:DigestValue', $signature_node))), "");
-        print ("   Digest Value: $refdigest\n") if $DEBUG;
+        my $refdigest = encode_base64(
+            decode_base64(
+                _trim(
+                    $self->{parser}->findvalue(
+                        'dsig:SignedInfo/dsig:Reference/dsig:DigestValue',
+                        $signature_node
+                    )
+                )
+            ),
+            ""
+        );
+        print("   Digest Value: $refdigest\n") if $DEBUG;
 
         # Get the SignatureValue used to verify the SignedInfo
-        my $signature = _trim($self->{ parser }->findvalue('dsig:SignatureValue', $signature_node));
-        print ("   Signature: $signature\n") if $DEBUG;
+        my $signature
+            = _trim(
+            $self->{parser}->findvalue('dsig:SignatureValue', $signature_node)
+            );
+        print("   Signature: $signature\n") if $DEBUG;
 
         # Get SignatureMethod Algorithim
-        my $signature_method = $self->{ parser }->findvalue(
-                'dsig:SignedInfo/dsig:SignatureMethod/@Algorithm', $signature_node);
+        my $signature_method
+            = $self->{parser}
+            ->findvalue('dsig:SignedInfo/dsig:SignatureMethod/@Algorithm',
+            $signature_node);
         $signature_method =~ s/^.*[#]//;
         $signature_method =~ s/^rsa-//;
         $signature_method =~ s/^dsa-//;
         $signature_method =~ s/^ecdsa-//;
         $signature_method =~ s/^hmac-//;
 
-        $self->{ sig_hash } = $signature_method;
-        print ("   SignatureMethod: $signature_method\n") if $DEBUG;
+        $self->{sig_hash} = $signature_method;
+        print("   SignatureMethod: $signature_method\n") if $DEBUG;
 
         # Get the SignedInfo and obtain its Canonical form
-        my ($signed_info) = $self->{ parser }->findnodes('dsig:SignedInfo', $signature_node);
-        my $signed_info_canon = $self->_canonicalize_xml($signed_info, $signature_node);
+        my ($signed_info)
+            = $self->{parser}->findnodes('dsig:SignedInfo', $signature_node);
+        my $signed_info_canon
+            = $self->_canonicalize_xml($signed_info, $signature_node);
 
         print "$signed_info_canon\n" if $DEBUG;
 
-        if(my $ref = Digest::SHA->can($signature_method)) {
+        if (my $ref = Digest::SHA->can($signature_method)) {
             $self->{sig_method} = $ref;
         }
-        elsif ( $ref = Crypt::Digest::RIPEMD160->can( $signature_method ))  {
+        elsif ($ref = Crypt::Digest::RIPEMD160->can($signature_method)) {
             $self->{sig_method} = $ref;
         }
         else {
             die("Can't handle $signature_method");
         }
 
-        if(my $ref = Digest::SHA->can($digest_method)) {
+        if (my $ref = Digest::SHA->can($digest_method)) {
             $self->{digest_method} = $ref;
         }
-        elsif ( $ref = Crypt::Digest::RIPEMD160->can( $digest_method ))  {
+        elsif ($ref = Crypt::Digest::RIPEMD160->can($digest_method)) {
             $self->{digest_method} = $ref;
         }
         else {
@@ -593,86 +879,115 @@ sub verify {
         # If a cert was provided to XML::Sig->new() use it to
         # verify the SignedInfo signature
         if (defined $self->{cert_obj}) {
+
             # use the provided cert to verify
-            unless ($self->_verify_x509_cert($self->{cert_obj},$signed_info_canon,$signature)) {
+            unless (
+                $self->_verify_x509_cert(
+                    $self->{cert_obj}, $signed_info_canon, $signature
+                )
+                )
+            {
                 print STDERR "not verified by x509\n";
                 return 0;
             }
         }
-        elsif (!defined $self->{cert_obj} && defined $self->{ hmac_key }) {
+        elsif (!defined $self->{cert_obj} && defined $self->{hmac_key}) {
+
             # use the provided cert to verify
-            unless ($self->_verify_hmac($signed_info_canon,$signature)) {
-                print "not verified by hmac-" . $self->{ sig_hash }, "\n" if $DEBUG;
+            unless ($self->_verify_hmac($signed_info_canon, $signature)) {
+                print "not verified by hmac-" . $self->{sig_hash}, "\n"
+                    if $DEBUG;
                 return 0;
             }
         }
+
         # Extract the XML provided certificate and use it to
         # verify the SignedInfo signature
         else {
             # extract the certficate or key from the document
             my %verify_dispatch = (
-                'X509Data' => '_verify_x509',
-                'RSAKeyValue' => '_verify_rsa',
-                'DSAKeyValue' => '_verify_dsa',
+                'X509Data'      => '_verify_x509',
+                'RSAKeyValue'   => '_verify_rsa',
+                'DSAKeyValue'   => '_verify_dsa',
                 'ECDSAKeyValue' => '_verify_ecdsa',
             );
             my $keyinfo_nodeset;
-            foreach my $key_info_sig_type ( qw/X509Data RSAKeyValue DSAKeyValue ECDSAKeyValue/ ) {
-                if ( $key_info_sig_type eq 'X509Data' ) {
-                    $keyinfo_nodeset = $self->{ parser }->find(
-                            "dsig:KeyInfo/dsig:$key_info_sig_type", $signature_node);
+            foreach my $key_info_sig_type (
+                qw/X509Data RSAKeyValue DSAKeyValue ECDSAKeyValue/)
+            {
+                if ($key_info_sig_type eq 'X509Data') {
+                    $keyinfo_nodeset
+                        = $self->{parser}
+                        ->find("dsig:KeyInfo/dsig:$key_info_sig_type",
+                        $signature_node);
+
                     #print ("   keyinfo_nodeset X509Data: $keyinfo_nodeset\n") if $DEBUG;
-                } else {
-                    $keyinfo_nodeset = $self->{ parser }->find(
-                            "dsig:KeyInfo/dsig:KeyValue/dsig:$key_info_sig_type", $signature_node);
+                }
+                else {
+                    $keyinfo_nodeset
+                        = $self->{parser}->find(
+                        "dsig:KeyInfo/dsig:KeyValue/dsig:$key_info_sig_type",
+                        $signature_node);
+
                     #print ("   keyinfo_nodeset [DR]SAKeyValue: $keyinfo_nodeset\n") if $DEBUG;
                 }
-                if ( $keyinfo_nodeset->size ) {
+                if ($keyinfo_nodeset->size) {
                     my $verify_method = $verify_dispatch{$key_info_sig_type};
-                    print ("   Verify Method: $verify_method\n") if $DEBUG;
-                    if ( ! $self->$verify_method($keyinfo_nodeset->get_node(0),
-                            $signed_info_canon, $signature) ) {
-                        print ("keyinfo_nodeset->get_node: " . $keyinfo_nodeset->get_node(0) . "\n") if $DEBUG;
+                    print("   Verify Method: $verify_method\n") if $DEBUG;
+                    if (
+                        !$self->$verify_method(
+                            $keyinfo_nodeset->get_node(0),
+                            $signed_info_canon,
+                            $signature
+                        )
+                        )
+                    {
+                        print("keyinfo_nodeset->get_node: "
+                                . $keyinfo_nodeset->get_node(0) . "\n")
+                            if $DEBUG;
                         print STDERR "Failed to verify using $verify_method\n";
                         return 0;
-                    } else {
-                        print ("Success Verifying\n") if $DEBUG;
+                    }
+                    else {
+                        print("Success Verifying\n") if $DEBUG;
                     }
                     last;
                 }
             }
-            die "Unrecognized key type or no KeyInfo in document" unless (
-                $keyinfo_nodeset && $keyinfo_nodeset->size > 0);
+            die "Unrecognized key type or no KeyInfo in document"
+                unless ($keyinfo_nodeset && $keyinfo_nodeset->size > 0);
         }
 
         # Signature of SignedInfo was verified above now obtain the
         # Canonical form of the XML and verify the DigestValue of the XML
 
         # Remove the Signature from the signed XML
-        my $signed_xml = $self->_get_signed_xml( $signature_node );
-        $signed_xml->removeChild( $signature_node );
+        my $signed_xml = $self->_get_signed_xml($signature_node);
+        $signed_xml->removeChild($signature_node);
 
         # Obtain the Canonical form of the XML
         my $canonical = $self->_transform($signed_xml, $signature_node);
 
         # Add the $signature_node back to the $signed_xml to allow other
         # signatures to be validated if they exist
-        $signed_xml->addChild( $signature_node );
+        $signed_xml->addChild($signature_node);
 
-        print ( "    Canonical XML:  " . $canonical ."\n") if $DEBUG;
+        print("    Canonical XML:  " . $canonical . "\n") if $DEBUG;
 
         # Obtain the DigestValue of the Canonical XML
         my $digest = $self->{digest_method}->(Encode::encode_utf8($canonical));
 
-        print ( "    Reference Digest:  " . _trim($refdigest) ."\n") if $DEBUG;
+        print("    Reference Digest:  " . _trim($refdigest) . "\n") if $DEBUG;
 
-        print ( "    Calculated Digest: ". _trim(encode_base64($digest, '')) ."\n") if $DEBUG;
+        print("    Calculated Digest: "
+                . _trim(encode_base64($digest, '')) . "\n")
+            if $DEBUG;
 
         # Return 0 - fail verification on the first XML signature that fails
         return 0 unless ($refdigest eq _trim(encode_base64($digest, '')));
 
-        print ( "Signature $i Valid\n") if $DEBUG;
-        }
+        print("Signature $i Valid\n") if $DEBUG;
+    }
 
     return 1;
 }
@@ -742,11 +1057,13 @@ sub _get_ids_to_sign {
 ##
 sub _get_xml_to_sign {
     my $self = shift;
-    my $id = shift;
-    die "You cannot sign an XML document without identifying the element to sign with an ID attribute" unless $id;
+    my $id   = shift;
+    die
+        "You cannot sign an XML document without identifying the element to sign with an ID attribute"
+        unless $id;
 
     my $xpath = "//*[\@ID='$id']";
-    my ($node) = $self->_get_node( $xpath );
+    my ($node) = $self->_get_node($xpath);
     return $node;
 }
 
@@ -765,13 +1082,14 @@ sub _get_signed_xml {
     my $self = shift;
     my ($context) = @_;
 
-    my $id = $self->{parser}->findvalue('./dsig:SignedInfo/dsig:Reference/@URI', $context);
+    my $id = $self->{parser}
+        ->findvalue('./dsig:SignedInfo/dsig:Reference/@URI', $context);
     $id =~ s/^#//;
-    print ("    Signed XML id: $id\n") if $DEBUG;
+    print("    Signed XML id: $id\n") if $DEBUG;
 
     $self->{'sign_id'} = $id;
     my $xpath = "//*[\@ID='$id']";
-    return $self->_get_node( $xpath, $context );
+    return $self->_get_node($xpath, $context);
 }
 
 ##
@@ -790,11 +1108,11 @@ sub _transform {
     my $self = shift;
     my ($xml, $context) = @_;
 
-    $context->setNamespace( 'http://www.w3.org/2000/09/xmldsig#', 'dsig' );
-    my $transforms = $self->{parser}->find(
-        'dsig:SignedInfo/dsig:Reference/dsig:Transforms/dsig:Transform',
-        $context
-    );
+    $context->setNamespace($self->{namespace}{dsig}, 'dsig');
+    my $transforms
+        = $self->{parser}
+        ->find('dsig:SignedInfo/dsig:Reference/dsig:Transforms/dsig:Transform',
+        $context);
 
     print "_transform\n" if $DEBUG;
     foreach my $node ($transforms->get_nodelist) {
@@ -802,6 +1120,7 @@ sub _transform {
 
         print "    Algorithm: $alg\n" if $DEBUG;
         if ($alg eq TRANSFORM_ENV_SIG) {
+
             # TODO the xml being passed here currently has the
             # Signature removed.  May be better to do it all here
             next;
@@ -843,17 +1162,18 @@ sub _transform {
 ##
 sub _find_prefixlist {
     my $self = shift;
-    my ($node) = @_;
+    my $node = shift;
+
+    return unless $node->can('getChildrenByLocalName');
+
     my @children = $node->getChildrenByLocalName('InclusiveNamespaces');
 
-    my $prefixlist = '';
+    my @list;
     foreach my $child (@children) {
-        if ($child) {
-            $prefixlist .= $child->getAttribute('PrefixList');
-        }
-        $prefixlist .= ' ';
+        my $p = $child->getAttribute('PrefixList');
+        push(@list, split(/\s+/, $p)) if $p;
     }
-    return split / /, $prefixlist;
+    return @list;
 }
 
 ##
@@ -870,22 +1190,22 @@ sub _find_prefixlist {
 ##
 sub _verify_rsa {
     my $self = shift;
-    my ($context,$canonical,$sig) = @_;
+    my ($context, $canonical, $sig) = @_;
 
     # Generate Public Key from XML
-    my $mod = _trim($self->{parser}->findvalue('dsig:Modulus', $context));
-    my $modBin = decode_base64( $mod );
-    my $exp = _trim($self->{parser}->findvalue('dsig:Exponent', $context));
-    my $expBin = decode_base64( $exp );
-    my $n = Crypt::OpenSSL::Bignum->new_from_bin($modBin);
-    my $e = Crypt::OpenSSL::Bignum->new_from_bin($expBin);
-    my $rsa_pub = Crypt::OpenSSL::RSA->new_key_from_parameters( $n, $e );
+    my $mod     = _trim($self->{parser}->findvalue('dsig:Modulus', $context));
+    my $modBin  = decode_base64($mod);
+    my $exp     = _trim($self->{parser}->findvalue('dsig:Exponent', $context));
+    my $expBin  = decode_base64($exp);
+    my $n       = Crypt::OpenSSL::Bignum->new_from_bin($modBin);
+    my $e       = Crypt::OpenSSL::Bignum->new_from_bin($expBin);
+    my $rsa_pub = Crypt::OpenSSL::RSA->new_key_from_parameters($n, $e);
 
     # Decode signature and verify
-    my $sig_hash = 'use_' . $self->{ sig_hash } . '_hash';
+    my $sig_hash = 'use_' . $self->{sig_hash} . '_hash';
     $rsa_pub->$sig_hash;
     my $bin_signature = decode_base64($sig);
-    return 1 if ($rsa_pub->verify( $canonical,  $bin_signature ));
+    return 1 if ($rsa_pub->verify($canonical, $bin_signature));
     return 0;
 }
 
@@ -904,7 +1224,7 @@ sub _clean_x509 {
     my $self = shift;
     my ($cert) = @_;
 
-    $cert = $cert->value() if(ref $cert);
+    $cert = $cert->value() if (ref $cert);
     chomp($cert);
 
     # rewrap the base64 data from the certificate; it may not be
@@ -913,13 +1233,16 @@ sub _clean_x509 {
 
     my @lines;
     while (length $cert > 64) {
-            push @lines, substr $cert, 0, 64, '';
-        }
+        push @lines, substr $cert, 0, 64, '';
+    }
     push @lines, $cert;
 
     $cert = join "\n", @lines;
 
-    $cert = "-----BEGIN CERTIFICATE-----\n" . $cert . "\n-----END CERTIFICATE-----\n";
+    $cert
+        = "-----BEGIN CERTIFICATE-----\n"
+        . $cert
+        . "\n-----END CERTIFICATE-----\n";
     return $cert;
 }
 
@@ -937,15 +1260,16 @@ sub _clean_x509 {
 ##
 sub _verify_x509 {
     my $self = shift;
-    my ($context,$canonical,$sig) = @_;
+    my ($context, $canonical, $sig) = @_;
 
-    eval {
-        require Crypt::OpenSSL::X509;
-    };
-    confess "Crypt::OpenSSL::X509 needs to be installed so that we can handle X509 certificates" if $@;
+    eval { require Crypt::OpenSSL::X509; };
+    confess
+        "Crypt::OpenSSL::X509 needs to be installed so that we can handle X509 certificates"
+        if $@;
 
     # Generate Public Key from XML
-    my $certificate = _trim($self->{parser}->findvalue('dsig:X509Certificate', $context));
+    my $certificate
+        = _trim($self->{parser}->findvalue('dsig:X509Certificate', $context));
 
     # This is added because the X509 parser requires it for self-identification
     $certificate = $self->_clean_x509($certificate);
@@ -975,8 +1299,8 @@ sub _verify_x509_cert {
     my $bin_signature = decode_base64($sig);
 
     if ($cert->key_alg_name eq 'id-ecPublicKey') {
-        eval {require Crypt::PK::ECC; CryptX->VERSION('0.036'); 1}
-        or confess "Crypt::PK::ECC 0.036+ needs to be installed so
+        eval { require Crypt::PK::ECC; CryptX->VERSION('0.036'); 1 }
+            or confess "Crypt::PK::ECC 0.036+ needs to be installed so
              that we can handle ECDSA signatures";
         my $ecdsa_pub = Crypt::PK::ECC->new(\$cert->pubkey);
 
@@ -984,20 +1308,24 @@ sub _verify_x509_cert {
 
         # Signature is stored as the concatenation of r and s.
         # verify_message_rfc7518 expects that format
-        if ($ecdsa_pub->verify_message_rfc7518( $bin_signature, $canonical, uc($self->{sig_hash}) )) {
+        if (
+            $ecdsa_pub->verify_message_rfc7518(
+                $bin_signature, $canonical, uc($self->{sig_hash})
+            )
+            )
+        {
             $self->{signer_cert} = $cert;
             return 1;
         }
     }
     elsif ($cert->key_alg_name eq 'dsaEncryption') {
-        eval {
-            require Crypt::OpenSSL::DSA;
-        };
+        eval { require Crypt::OpenSSL::DSA; };
         confess "Crypt::OpenSSL::DSA needs to be installed so
                     that we can handle DSA X509 certificates" if $@;
 
-        my $dsa_pub  = Crypt::OpenSSL::DSA->read_pub_key_str( $cert->pubkey );
-        my $sig_size = ($dsa_pub->get_sig_size - 8)/2;
+        my $dsa_pub  = Crypt::OpenSSL::DSA->read_pub_key_str($cert->pubkey);
+        my $sig_size = ($dsa_pub->get_sig_size - 8) / 2;
+
         #my ($r, $s) = unpack('a20a20', $bin_signature);
         my $unpk = "a" . $sig_size . "a" . $sig_size;
         my ($r, $s) = unpack($unpk, $bin_signature);
@@ -1013,9 +1341,7 @@ sub _verify_x509_cert {
         }
     }
     else {
-        eval {
-            require Crypt::OpenSSL::RSA;
-        };
+        eval { require Crypt::OpenSSL::RSA; };
         confess "Crypt::OpenSSL::RSA needs to be installed so
                     that we can handle X509 certificates" if $@;
 
@@ -1023,8 +1349,9 @@ sub _verify_x509_cert {
 
         my $sig_hash = 'use_' . $self->{sig_hash} . '_hash';
         $rsa_pub->$sig_hash();
+
         # If successful verify, store the signer's cert for validation
-        if ($rsa_pub->verify( $canonical,  $bin_signature )) {
+        if ($rsa_pub->verify($canonical, $bin_signature)) {
             $self->{signer_cert} = $cert;
             return 1;
         }
@@ -1045,6 +1372,7 @@ sub _verify_x509_cert {
 ##
 sub _zero_fill_buffer {
     my $bits = shift;
+
     # set all bit to zero
     my $v = '';
     for (my $i = 0; $i < $bits; $i++) {
@@ -1066,19 +1394,20 @@ sub _zero_fill_buffer {
 sub _concat_dsa_sig_r_s {
 
     my ($buffer, $r, $s, $sig_size) = @_;
-    my $bits_r = (length($r)*8)-1;
-    my $bits_s = (length($s)*8)-1;
+    my $bits_r = (length($r) * 8) - 1;
+    my $bits_s = (length($s) * 8) - 1;
 
     my $halfsize = $sig_size / 2;
 
     # Place $s right justified in $v starting at bit 319
-    for (my $i = $bits_s; $i >=0; $i--) {
-        vec($$buffer, $halfsize + $i + (($halfsize -1) - $bits_s) , 1) = vec($s, $i, 1);
+    for (my $i = $bits_s; $i >= 0; $i--) {
+        vec($$buffer, $halfsize + $i + (($halfsize - 1) - $bits_s), 1)
+            = vec($s, $i, 1);
     }
 
     # Place $r right justified in $v starting at bit 159
-    for (my $i = $bits_r; $i >= 0 ; $i--) {
-        vec($$buffer, $i + (($halfsize -1) - $bits_r) , 1) = vec($r, $i, 1);
+    for (my $i = $bits_r; $i >= 0; $i--) {
+        vec($$buffer, $i + (($halfsize - 1) - $bits_r), 1) = vec($r, $i, 1);
     }
 
 }
@@ -1097,19 +1426,21 @@ sub _concat_dsa_sig_r_s {
 ##
 sub _verify_dsa {
     my $self = shift;
-    my ($context,$canonical,$sig) = @_;
+    my ($context, $canonical, $sig) = @_;
 
-    eval {
-        require Crypt::OpenSSL::DSA;
-    };
+    eval { require Crypt::OpenSSL::DSA; };
     confess "Crypt::OpenSSL::DSA needs to be installed so
                     that we can handle DSA signatures" if $@;
 
     # Generate Public Key from XML
-    my $p = decode_base64(_trim($self->{parser}->findvalue('dsig:P', $context)));
-    my $q = decode_base64(_trim($self->{parser}->findvalue('dsig:Q', $context)));
-    my $g = decode_base64(_trim($self->{parser}->findvalue('dsig:G', $context)));
-    my $y = decode_base64(_trim($self->{parser}->findvalue('dsig:Y', $context)));
+    my $p
+        = decode_base64(_trim($self->{parser}->findvalue('dsig:P', $context)));
+    my $q
+        = decode_base64(_trim($self->{parser}->findvalue('dsig:Q', $context)));
+    my $g
+        = decode_base64(_trim($self->{parser}->findvalue('dsig:G', $context)));
+    my $y
+        = decode_base64(_trim($self->{parser}->findvalue('dsig:Y', $context)));
     my $dsa_pub = Crypt::OpenSSL::DSA->new();
     $dsa_pub->set_p($p);
     $dsa_pub->set_q($q);
@@ -1124,8 +1455,8 @@ sub _verify_dsa {
     # The signature value consists of the base64 encoding of the
     # concatenation of r and s in that order ($r . $s)
     # Binary Signature is stored as a concatenation of r and s
-    my $sig_size = ($dsa_pub->get_sig_size - 8)/2;
-    my $unpk = "a" . $sig_size . "a" . $sig_size;
+    my $sig_size = ($dsa_pub->get_sig_size - 8) / 2;
+    my $unpk     = "a" . $sig_size . "a" . $sig_size;
     my ($r, $s) = unpack($unpk, $bin_signature);
 
     # Create a new Signature Object from r and s
@@ -1134,7 +1465,8 @@ sub _verify_dsa {
     $sigobj->set_s($s);
 
     # DSA signatures are limited to a message body of 20 characters, so a sha1 digest is taken
-    return 1 if ($dsa_pub->do_verify( $self->{sig_method}->($canonical),  $sigobj ));
+    return 1
+        if ($dsa_pub->do_verify($self->{sig_method}->($canonical), $sigobj));
     return 0;
 }
 
@@ -1152,13 +1484,15 @@ sub _verify_dsa {
 ##
 sub _verify_ecdsa {
     my $self = shift;
-    my ($context,$canonical,$sig) = @_;
+    my ($context, $canonical, $sig) = @_;
 
-    eval {require Crypt::PK::ECC; CryptX->VERSION('0.036'); 1}
-    or confess "Crypt::PK::ECC 0.036+ needs to be installed so
+    eval { require Crypt::PK::ECC; CryptX->VERSION('0.036'); 1 }
+        or confess "Crypt::PK::ECC 0.036+ needs to be installed so
              that we can handle ECDSA signatures";
+
     # Generate Public Key from XML
-    my $oid = _trim($self->{parser}->findvalue('.//dsig:NamedCurve/@URN', $context));
+    my $oid = _trim(
+        $self->{parser}->findvalue('.//dsig:NamedCurve/@URN', $context));
 
     use URI ();
     my $u1 = URI->new($oid);
@@ -1179,27 +1513,32 @@ sub _verify_ecdsa {
         '1.3.36.3.3.2.8.1.1.13' => 'brainpoolP512r1',
     );
 
-    my $x = $self->{parser}->findvalue('.//dsig:PublicKey/dsig:X/@Value', $context);
-    my $y = $self->{parser}->findvalue('.//dsig:PublicKey/dsig:Y/@Value', $context);
+    my $x = $self->{parser}
+        ->findvalue('.//dsig:PublicKey/dsig:X/@Value', $context);
+    my $y = $self->{parser}
+        ->findvalue('.//dsig:PublicKey/dsig:Y/@Value', $context);
 
     my $ecdsa_pub = Crypt::PK::ECC->new();
 
-    $ecdsa_pub->import_key({
-        kty => "EC",
-        curve_name => $curve_name{ $oid },
-        pub_x   => $x,
-        pub_y   => $y,
-    });
+    $ecdsa_pub->import_key(
+        {
+            kty        => "EC",
+            curve_name => $curve_name{$oid},
+            pub_x      => $x,
+            pub_y      => $y,
+        }
+    );
 
     my $bin_signature = decode_base64($sig);
 
     # verify_message_rfc7518 is used to verify signature stored as a
     # concatenation of integers r and s
-    return 1 if ($ecdsa_pub->verify_message_rfc7518(
-                    $bin_signature,
-                    $canonical,
-                    uc($self->{sig_hash}))
-                );
+    return 1
+        if (
+        $ecdsa_pub->verify_message_rfc7518(
+            $bin_signature, $canonical, uc($self->{sig_hash})
+        )
+        );
     return 0;
 }
 
@@ -1221,18 +1560,19 @@ sub _verify_hmac {
     # Decode signature and verify
     my $bin_signature = decode_base64($sig);
     use Crypt::Mac::HMAC qw( hmac );
-    if ( defined $self->{ hmac_key } ) {
-        print ("    Verifying SignedInfo using hmac-", $self->{ sig_hash }, "\n") if $DEBUG;
-        if ( my $ref = Digest::SHA->can('hmac_' . $self->{ sig_hash }) ) {
-            if ($bin_signature eq $self->_calc_hmac_signature( $canonical )) {
+    if (defined $self->{hmac_key}) {
+        print("    Verifying SignedInfo using hmac-", $self->{sig_hash}, "\n")
+            if $DEBUG;
+        if (my $ref = Digest::SHA->can('hmac_' . $self->{sig_hash})) {
+            if ($bin_signature eq $self->_calc_hmac_signature($canonical)) {
                 return 1;
             }
             else {
                 return 0;
             }
         }
-        elsif ( $ref = Crypt::Digest::RIPEMD160->can($self->{ sig_hash })) {
-            if ($bin_signature eq $self->_calc_hmac_signature( $canonical )) {
+        elsif ($ref = Crypt::Digest::RIPEMD160->can($self->{sig_hash})) {
+            if ($bin_signature eq $self->_calc_hmac_signature($canonical)) {
                 return 1;
             }
             else {
@@ -1243,7 +1583,8 @@ sub _verify_hmac {
             die("Can't handle $self->{ sig_hash }");
         }
 
-    } else {
+    }
+    else {
         return 0;
     }
 }
@@ -1264,9 +1605,10 @@ sub _get_node {
     my ($xpath, $context) = @_;
     my $nodeset;
     if ($context) {
-         $nodeset = $self->{parser}->find($xpath, $context);
-    } else {
-         $nodeset = $self->{parser}->find($xpath);
+        $nodeset = $self->{parser}->find($xpath, $context);
+    }
+    else {
+        $nodeset = $self->{parser}->find($xpath);
     }
     foreach my $node ($nodeset->get_nodelist) {
         return $node;
@@ -1290,448 +1632,226 @@ sub _trim {
     return $string;
 }
 
-##
-## _load_ecdsa_key($key_text)
-##
-## Arguments:
-##    $key_text:    string ECDSA Private Key as String
-##
-## Returns: nothing
-##
-## Populate:
-##   self->{KeyInfo}
-##   self->{key_obj}
-##   self->{key_type}
-##
-sub _load_ecdsa_key {
-    my $self = shift;
-    my $key_text = shift;
 
-    eval {require Crypt::PK::ECC; CryptX->VERSION('0.036'); 1}
-    or confess "Crypt::PK::ECC 0.036+ needs to be installed so
-             that we can handle ECDSA signatures";
+=head2 get_key_info
 
-    my $ecdsa_key = Crypt::PK::ECC->new(\$key_text);
+Returns the XML::LibXML::Element for the KeyInfo section of the Signature
 
-    if ( $ecdsa_key ) {
-        $self->{ key_obj } = $ecdsa_key;
+=cut
 
-        my $key_hash    = $ecdsa_key->key2hash;
-
-        my $oid         = $key_hash->{ curve_oid };
-        my $x           = $key_hash->{ pub_x };
-        my $y           = $key_hash->{ pub_y };
-
-        $self->{KeyInfo} = "<dsig:KeyInfo>
-                             <dsig:KeyValue>
-                                <dsig:ECDSAKeyValue>
-                                    <dsig:DomainParameters>
-                                        <dsig:NamedCurve URN=\"urn:oid:$oid\" />
-                                    </dsig:DomainParameters>
-                                    <dsig:PublicKey>
-                                        <dsig:X Value=\"$x\" />
-                                        <dsig:Y Value=\"$y\" />
-                                    </dsig:PublicKey>
-                                </dsig:ECDSAKeyValue>
-                             </dsig:KeyValue>
-                            </dsig:KeyInfo>";
-        $self->{key_type} = 'ecdsa';
-    }
-    else {
-        confess "did not get a new Crypt::PK::ECC object";
-    }
-}
-
-##
-## _load_dsa_key($key_text)
-##
-## Arguments:
-##    $key_text:    string DSA Private Key as String
-##
-## Returns: nothing
-##
-## Populate:
-##   self->{KeyInfo}
-##   self->{key_obj}
-##   self->{key_type}
-##
-sub _load_dsa_key {
-    my $self = shift;
-    my $key_text = shift;
-
-    eval {
-        require Crypt::OpenSSL::DSA;
-    };
-
-    confess "Crypt::OpenSSL::DSA needs to be installed so that we can handle DSA keys." if $@;
-
-    my $dsa_key = Crypt::OpenSSL::DSA->read_priv_key_str( $key_text );
-
-    if ( $dsa_key ) {
-        $self->{ key_obj } = $dsa_key;
-        my $g = encode_base64( $dsa_key->get_g(), '' );
-        my $p = encode_base64( $dsa_key->get_p(), '' );
-        my $q = encode_base64( $dsa_key->get_q(), '' );
-        my $y = encode_base64( $dsa_key->get_pub_key(), '' );
-
-        $self->{KeyInfo} = "<dsig:KeyInfo>
-                             <dsig:KeyValue>
-                              <dsig:DSAKeyValue>
-                               <dsig:P>$p</dsig:P>
-                               <dsig:Q>$q</dsig:Q>
-                               <dsig:G>$g</dsig:G>
-                               <dsig:Y>$y</dsig:Y>
-                              </dsig:DSAKeyValue>
-                             </dsig:KeyValue>
-                            </dsig:KeyInfo>";
-        $self->{key_type} = 'dsa';
-    }
-    else {
-        confess "did not get a new Crypt::OpenSSL::RSA object";
-    }
-}
-
-##
-## _load_rsa_key($key_text)
-##
-## Arguments:
-##    $key_text:    string RSA Private Key as String
-##
-## Returns: nothing
-##
-## Populate:
-##   self->{KeyInfo}
-##   self->{key_obj}
-##   self->{key_type}
-##
-sub _load_rsa_key {
-    my $self = shift;
-    my ($key_text) = @_;
-
-    eval {
-        require Crypt::OpenSSL::RSA;
-    };
-    confess "Crypt::OpenSSL::RSA needs to be installed so that we can handle RSA keys." if $@;
-
-    my $rsaKey = Crypt::OpenSSL::RSA->new_private_key( $key_text );
-
-    if ( $rsaKey ) {
-        $rsaKey->use_pkcs1_padding();
-        $self->{ key_obj }  = $rsaKey;
-        $self->{ key_type } = 'rsa';
-
-        if (!$self->{ x509 }) {
-            my $bigNum = ( $rsaKey->get_key_parameters() )[1];
-            my $bin = $bigNum->to_bin();
-            my $exp = encode_base64( $bin, '' );
-
-            $bigNum = ( $rsaKey->get_key_parameters() )[0];
-            $bin = $bigNum->to_bin();
-            my $mod = encode_base64( $bin, '' );
-            $self->{KeyInfo} = "<dsig:KeyInfo>
-                                 <dsig:KeyValue>
-                                  <dsig:RSAKeyValue>
-                                   <dsig:Modulus>$mod</dsig:Modulus>
-                                   <dsig:Exponent>$exp</dsig:Exponent>
-                                  </dsig:RSAKeyValue>
-                                 </dsig:KeyValue>
-                                </dsig:KeyInfo>";
-        }
-    }
-    else {
-        confess "did not get a new Crypt::OpenSSL::RSA object";
-    }
-}
-
-##
-## _load_hmac_key_info()
-##
-## Arguments:
-##    none
-##
-## Returns: nothing
-##
-## Populate:
-##   self->{KeyInfo}
-##
-sub _load_hmac_key_info {
+sub get_key_info {
     my $self = shift;
 
-    if (! defined $self->{ key_name }) {
-        return;
-    }
-
-    $self->{KeyInfo} = qq{<dsig:KeyInfo><dsig:KeyName>$self->{key_name}</dsig:KeyName></dsig:KeyInfo>};
+    return if $self->{x509};
+    my $method = "get_$self->{key_type}_key";
+    return $self->$method;
 }
 
-##
-## _load_x509_key($key_text)
-##
-## Arguments:
-##    $key_text:    string RSA Private Key as String
-##
-## Returns: nothing
-##
-## Populate:
-##   self->{key_obj}
-##   self->{key_type}
-##
-sub _load_x509_key {
-    my $self = shift;
-    my $key_text = shift;
+=head2 get_ecda_key
 
-    eval {
-        require Crypt::OpenSSL::X509;
-    };
-    confess "Crypt::OpenSSL::X509 needs to be installed so that we
-            can handle X509 Certificates." if $@;
+Returns the XML::LibXML::Element for the KeyInfo section of the Signature when
+we have an edsa key
 
-    my $x509Key = Crypt::OpenSSL::X509->new_private_key( $key_text );
+=cut
 
-    if ( $x509Key ) {
-        $x509Key->use_pkcs1_padding();
-        $self->{ key_obj } = $x509Key;
-        $self->{key_type} = 'x509';
-    }
-    else {
-        confess "did not get a new Crypt::OpenSSL::X509 object";
-    }
-}
-
-##
-## _load_cert_file()
-##
-## Arguments: none
-##
-## Returns: nothing
-##
-## Read the file name from $self->{ cert } and
-## Populate:
-##   self->{key_obj}
-##   $self->{KeyInfo}
-##
-sub _load_cert_file {
+sub get_ecdsa_key {
     my $self = shift;
 
-    eval {
-        require Crypt::OpenSSL::X509;
-    };
+    state $ecdsa_key;
+    return $ecdsa_key if $ecdsa_key;
 
-    confess "Crypt::OpenSSL::X509 needs to be installed so that we can handle X509 certs." if $@;
+    my $key_hash = $self->{key_obj}->key2hash;
 
-    my $file = $self->{ cert };
-    if ( open my $CERT, '<', $file ) {
-        my $text = '';
-        local $/ = undef;
-        $text = <$CERT>;
-        close $CERT;
+    my $oid = $key_hash->{curve_oid};
+    my $x   = $key_hash->{pub_x};
+    my $y   = $key_hash->{pub_y};
 
-        my $cert = Crypt::OpenSSL::X509->new_from_string($text);
-        if ( $cert ) {
-            $self->{ cert_obj } = $cert;
-            my $cert_text = $cert->as_string;
-            $cert_text =~ s/-----[^-]*-----//gm;
-            $self->{KeyInfo} = "<dsig:KeyInfo><dsig:X509Data><dsig:X509Certificate>\n"._trim($cert_text)."\n</dsig:X509Certificate></dsig:X509Data></dsig:KeyInfo>";
-        }
-        else {
-            confess "Could not load certificate from $file";
-        }
-    }
-    else {
-        confess "Could not find certificate file $file";
-    }
+    my ($d, $root) = $self->_make_KeyInfo_node();
+    my $kv   = $d->createElement('dsig:KeyValue');
+    $root->addChild($kv);
+    my $ekv   = $d->createElement('dsig:ECDSAKeyValue');
+    $kv->addChild($ekv);
+    my $dp = $d->createElement('dsig:DomainParameters');
+    $ekv->addChild($dp);
 
-    return;
+    my $nc = $d->createElement('dsig:NamedCurve');
+    $nc->setAttribute('URN' => "urn:oid:$oid");
+    $dp->addChild($nc);
+
+    my $pk = $d->createElement('dsig:PublicKey');
+    $ekv->addChild($pk);
+
+    my $xe = $d->createElement('dsig:X');
+    $xe->setAttribute('Value' => $x);
+    my $ye = $d->createElement('dsig:Y');
+    $ye->setAttribute('Value' => $y);
+
+    $pk->addChild($xe);
+    $pk->addChild($ye);
+
+    $ecdsa_key = $root;
+    return $ecdsa_key;
+
 }
 
-##
-## _load_cert_text()
-##
-## Arguments: none
-##
-## Returns: nothing
-##
-## Read the certificate from $self->{ cert_text } and
-## Populate:
-##   self->{key_obj}
-##   $self->{KeyInfo}
-##
-sub _load_cert_text {
+
+=head2 get_dsa_key
+
+Returns the XML::LibXML::Element for the KeyInfo section of the Signature when
+we have an DSA key
+
+=cut
+
+sub get_dsa_key {
     my $self = shift;
 
-    eval {
-        require Crypt::OpenSSL::X509;
-    };
+    state $dsa_key;
+    return $dsa_key if $dsa_key;
 
-    confess "Crypt::OpenSSL::X509 needs to be installed so that we can handle X509 certs." if $@;
+    my ($d, $root) = $self->_make_KeyInfo_node();
+    my $kv   = $d->createElement('dsig:KeyValue');
+    $root->addChild($kv);
 
-    my $text = $self->{ cert_text };
-    my $cert = Crypt::OpenSSL::X509->new_from_string($text);
-    if ( $cert ) {
-        $self->{ cert_obj } = $cert;
-        my $cert_text = $cert->as_string;
-        $cert_text =~ s/-----[^-]*-----//gm;
-        $self->{KeyInfo} = "<dsig:KeyInfo><dsig:X509Data><dsig:X509Certificate>\n"._trim($cert_text)."\n</dsig:X509Certificate></dsig:X509Data></dsig:KeyInfo>";
-    }
-    else {
-            confess "Could not load certificate from given text.";
-    }
+    my $ekv   = $d->createElement('dsig:DSAKeyValue');
+    $kv->addChild($ekv);
+    my $dp = $d->createElement('dsig:P');
+    $ekv->addChild($dp);
+    my $dq = $d->createElement('dsig:Q');
+    $ekv->addChild($dq);
+    my $dg = $d->createElement('dsig:G');
+    $ekv->addChild($dg);
+    my $dy = $d->createElement('dsig:Y');
+    $ekv->addChild($dy);
 
-    return;
+    $dp->appendText(encode_base64($self->{key_obj}->get_p(),''));
+    $dq->appendText(encode_base64($self->{key_obj}->get_q(),''));
+    $dg->appendText(encode_base64($self->{key_obj}->get_g(),''));
+    $dy->appendText(encode_base64($self->{key_obj}->get_pub_key(),''));
+
+    $dsa_key = $root;
+    return $dsa_key;
 }
 
-##
-## _load_key($file)
-##
-## Arguments: $self->{ key }
-##
-## Returns: nothing
-##
-## Load the key and process it acording to its headers
-##
-sub _load_key {
+=head2 get_rsa_key
+
+Returns the XML::LibXML::Element for the KeyInfo section of the Signature when
+we have a RSA key
+
+=cut
+
+sub get_rsa_key {
     my $self = shift;
-    my $file = $self->{ key };
 
-    if ( open my $KEY, '<', $file ) {
-        my $text = '';
-        local $/ = undef;
-        $text = <$KEY>;
-        close $KEY;
+    confess "Unable to generate KeyInfo segment when x509 is involved" if $self->{x509};
 
-        if ( $text =~ m/BEGIN ([DR]SA) PRIVATE KEY/ ) {
-            my $key_used = $1;
+    state $rsa_key;
+    return $rsa_key if $rsa_key;
 
-            if ( $key_used eq 'RSA' ) {
-                $self->_load_rsa_key( $text );
-            }
-            else {
-                $self->_load_dsa_key( $text );
-            }
+    my $rsaKey = $self->{key_obj};
 
-            return 1;
-        } elsif ( $text =~ m/BEGIN EC PRIVATE KEY/ ) {
-            $self->_load_ecdsa_key( $text );
-        } elsif ( $text =~ m/BEGIN PRIVATE KEY/ ) {
-            $self->_load_rsa_key( $text );
-        } elsif ($text =~ m/BEGIN CERTIFICATE/) {
-            $self->_load_x509_key( $text );
-        }
-        else {
-            confess "Could not detect type of key $file.";
-        }
-    }
-    else {
-        confess "Could not load key $file: $!";
-    }
+    my @params = $rsaKey->get_key_parameters();
 
-    return;
+    my ($d, $root) = $self->_make_KeyInfo_node();
+
+    my $rkv = $d->createElement('dsig:RSAKeyValue');
+
+    $self->_add_KeyValue_node($d, $root, $rkv);
+
+    my $mod = encode_base64($params[0]->to_bin(), "\n");
+    my $m = $d->createElement('dsig:Modulus');
+    $m->appendText($mod);
+    $rkv->addChild($m);
+
+    my $e = $d->createElement('dsig:Exponent');
+    my $exp = encode_base64($params[1]->to_bin(), '');
+    $e->appendText($exp);
+    $rkv->addChild($e);
+
+    $rsa_key = $root;
+    return $rsa_key;
 }
 
-##
-## _signature_xml($signed_info,$signature_value)
-##
-## Arguments:
-##   $signed_info:      string XML String Fragment
-##   $signature_value   String Base64 Signature Value
-##
-## Returns: string      XML fragment
-##
-## Create a XML string of the Signature
-##
-sub _signature_xml {
+=head2 get_hmac_key
+
+Returns the XML::LibXML::Element for the KeyInfo section of the Signature when
+we have a HMAC key
+
+=cut
+
+sub _make_KeyInfo_node {
     my $self = shift;
-    my ($signed_info,$signature_value) = @_;
 
-    return qq{<dsig:Signature xmlns:dsig="http://www.w3.org/2000/09/xmldsig#">
-            $signed_info
-            <dsig:SignatureValue>$signature_value</dsig:SignatureValue>
-            $self->{KeyInfo}
-        </dsig:Signature>};
+    my $d = XML::LibXML->createDocument;
+    my $root = $d->createElementNS($self->{namespace}{dsig}, 'dsig:KeyInfo');
+    return ($d, $root);
 }
 
-##
-## _signedinfo_xml($digest_xml)
-##
-## Arguments:
-##   $digest_xml        string XML String Fragment
-##
-## Returns: string      XML fragment
-##
-## Create a XML string of the SignedInfo
-##
-sub _signedinfo_xml {
+sub _add_KeyValue_node {
     my $self = shift;
-    my ($digest_xml) = @_;
+    my $d    = shift;
+    my $root = shift;
+    my $node = shift;
 
-    my $algorithm;
-    if (! defined $self->{key_type} && defined $self->{ hmac_key } ) {
-        $self->{key_type} = 'hmac';
-    }
+    my $kv   = $d->createElement('dsig:KeyValue');
+    $root->addChild($kv);
+    $kv->addChild($node);
 
-    if ( $self->{ sig_hash } eq 'sha1' && $self->{key_type} ne 'ecdsa' ) {
-        $algorithm = "http://www.w3.org/2000/09/xmldsig#$self->{key_type}-$self->{ sig_hash }";
-    }
-    elsif ( $self->{key_type} eq 'ecdsa' ) {
-        if ( $self->{ sig_hash } eq 'ripemd160' || $self->{ sig_hash } eq  'whirlpool' ) {
-            $algorithm = "http://www.w3.org/2007/05/xmldsig-more#$self->{key_type}-$self->{ sig_hash }";
-        }
-        else {
-            $algorithm = "http://www.w3.org/2001/04/xmldsig-more#$self->{key_type}-$self->{ sig_hash }";
-        }
-    }
-    elsif ( $self->{ key_type } eq 'dsa' && $self->{ sig_hash } eq 'sha256') {
-        $algorithm = "http://www.w3.org/2009/xmldsig11#$self->{key_type}-$self->{ sig_hash }";
-    }
-    else {
-        $algorithm = "http://www.w3.org/2001/04/xmldsig-more#$self->{key_type}-$self->{ sig_hash }";
-    }
-
-    #return qq{<dsig:SignedInfo xmlns:dsig="http://www.w3.org/2000/09/xmldsig#">
-    return qq{<dsig:SignedInfo xmlns:dsig="http://www.w3.org/2000/09/xmldsig#" xmlns:xenc="http://www.w3.org/2001/04/xmlenc#">
-                <dsig:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#" />
-                <dsig:SignatureMethod Algorithm="$algorithm" />
-                $digest_xml
-            </dsig:SignedInfo>};
 }
 
-##
-## _reference_xml($id)
-##
-## Arguments:
-##   $id        string XML ID related to the URI
-##   $digest    string Base64 encoded digest
-##
-## Returns: string      XML fragment
-##
-## Create a XML string of the Reference
-##
-sub _reference_xml {
+sub get_hmac_key {
     my $self = shift;
-    my $id = shift;
-    my ($digest) = @_;
 
-    my $algorithm;
-    if ( $self->{ digest_hash } eq 'sha1') {
-        $algorithm = "http://www.w3.org/2000/09/xmldsig#$self->{ digest_hash }";
-    }
-    elsif (($self->{ digest_hash } eq 'sha224') || ($self->{ digest_hash } eq 'sha384')) {
-        $algorithm = "http://www.w3.org/2001/04/xmldsig-more#$self->{ digest_hash }";
-    }
-    else {
-        $algorithm = "http://www.w3.org/2001/04/xmlenc#$self->{ digest_hash }";
-    }
+    state $hmac_key;
+    return $hmac_key if $hmac_key;
 
-    return qq{<dsig:Reference URI="#$id">
-                        <dsig:Transforms>
-                            <dsig:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature" />
-                            <dsig:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
-                        </dsig:Transforms>
-                        <dsig:DigestMethod Algorithm="$algorithm" />
-                        <dsig:DigestValue>$digest</dsig:DigestValue>
-                    </dsig:Reference>};
+    die "Unable to create hmac key info" unless $self->{key_name};
+
+    my ($d, $root) = $self->_make_KeyInfo_node();
+    my $kv = $d->createElement('dsig:KeyName');
+    $root->addChild($kv);
+    $kv->appendText($self->{key_name});
+
+    $hmac_key = $root;
+    return $hmac_key;
 }
 
+
+sub get_x509cert_key {
+    my $self = shift;
+
+    state $x509;
+    return $x509 if $x509;
+
+    my $cert_text = $self->_get_cert_text;
+
+
+    my ($d, $root) = $self->_make_KeyInfo_node();
+    my $x509_data   = $d->createElement('dsig:X509Data');
+    $root->addChild($x509_data);
+    my $x509_cert = $d->createElement('dsig:X509Certificate');
+    $x509_data->addChild($x509_cert);
+    $x509_cert->appendText(_trim($cert_text));
+
+    $x509 = $root;
+    return $x509;
+}
+
+sub _get_cert_text {
+    my $self = shift;
+    my $text = $self->{cert_obj}->as_string;
+    $text =~ s/-----[^-]*-----//gm;
+    return _trim($text);
+}
+
+sub _get_digest_algorith {
+    my $self = shift;
+    my $digest_hash = $self->{digest_hash};
+    return "http://www.w3.org/2000/09/xmldsig#$digest_hash"
+        if $digest_hash eq 'sha1';
+    return "http://www.w3.org/2001/04/xmldsig-more#$digest_hash"
+        if any { $_ eq $digest_hash } qw(sha224 sha384);
+    return "http://www.w3.org/2001/04/xmlenc#$digest_hash";
+}
 
 ##
 ## _canonicalize_xml($xml, $context)
@@ -1749,37 +1869,36 @@ sub _canonicalize_xml {
     my $self = shift;
     my ($xml, $context) = @_;
 
-    print ("_canonicalize_xml:\n") if $DEBUG;
-    my $canon_method = $self->{ parser }->findnodes(
-                'dsig:SignedInfo/dsig:CanonicalizationMethod', $context
-    );
+    print("_canonicalize_xml:\n") if $DEBUG;
+    my $canon_method = $self->{parser}
+        ->findnodes('dsig:SignedInfo/dsig:CanonicalizationMethod', $context);
 
     foreach my $node ($canon_method->get_nodelist) {
         my $alg = $node->getAttribute('Algorithm');
 
-        print ("    Canon Method: $alg\n") if $DEBUG;
+        print("    Canon Method: $alg\n") if $DEBUG;
         if ($alg eq TRANSFORM_C14N) {
-           print ("        toStringC14N\n") if $DEBUG;
-           $xml = $xml->toStringC14N();
+            print("        toStringC14N\n") if $DEBUG;
+            $xml = $xml->toStringC14N();
         }
         elsif ($alg eq TRANSFORM_C14N_COMMENTS) {
-            print ("        toStringC14N_Comments\n") if $DEBUG;
+            print("        toStringC14N_Comments\n") if $DEBUG;
             $xml = $xml->toStringC14N(1);
         }
         elsif ($alg eq TRANSFORM_C14N_V1_1) {
-           print ("        toStringC14N_v1_1\n") if $DEBUG;
-           $xml = $xml->toStringC14N_v1_1();
+            print("        toStringC14N_v1_1\n") if $DEBUG;
+            $xml = $xml->toStringC14N_v1_1();
         }
         elsif ($alg eq TRANSFORM_C14N_V1_1_COMMENTS) {
-            print ("        toStringC14N_v1_1_Comments\n") if $DEBUG;
+            print("        toStringC14N_v1_1_Comments\n") if $DEBUG;
             $xml = $xml->toStringC14N_v1_1(1);
         }
         elsif ($alg eq TRANSFORM_EXC_C14N) {
-            print ("        toStringEC14N\n") if $DEBUG;
+            print("        toStringEC14N\n") if $DEBUG;
             $xml = $xml->toStringEC14N();
         }
         elsif ($alg eq TRANSFORM_EXC_C14N_COMMENTS) {
-            print ("        toStringEC14N_Comments\n") if $DEBUG;
+            print("        toStringEC14N_Comments\n") if $DEBUG;
             $xml = $xml->toStringEC14N(1);
         }
         else {
@@ -1800,14 +1919,14 @@ sub _canonicalize_xml {
 ## Calculates signature based on the method and hash
 ##
 sub _calc_dsa_signature {
-    my $self                = shift;
-    my $signed_info_canon   = shift;
+    my $self              = shift;
+    my $signed_info_canon = shift;
 
-    print ("    Signing SignedInfo using DSA key type\n") if $DEBUG;
-    if(my $ref = Digest::SHA->can($self->{ sig_hash })) {
+    print("    Signing SignedInfo using DSA key type\n") if $DEBUG;
+    if (my $ref = Digest::SHA->can($self->{sig_hash})) {
         $self->{sig_method} = $ref;
     }
-    elsif ( $ref = Crypt::Digest::RIPEMD160->can($self->{ sig_hash }))  {
+    elsif ($ref = Crypt::Digest::RIPEMD160->can($self->{sig_hash})) {
         $self->{sig_method} = $ref;
     }
     else {
@@ -1816,7 +1935,8 @@ sub _calc_dsa_signature {
 
     # DSA 1024-bit only permits the signing of 20 bytes or less, hence the sha1
     # DSA 2048-bit only permits the signing sha256
-    my $bin_signature = $self->{key_obj}->do_sign( $self->{ sig_method }($signed_info_canon) );
+    my $bin_signature
+        = $self->{key_obj}->do_sign($self->{sig_method}($signed_info_canon));
 
     # https://www.w3.org/TR/2002/REC-xmldsig-core-20020212/#sec-SignatureAlg
     # The output of the DSA algorithm consists of a pair of integers
@@ -1826,7 +1946,7 @@ sub _calc_dsa_signature {
     my $s = $bin_signature->get_s;
 
     my $sig_size = ($self->{key_obj}->get_sig_size - 8) * 8;
-    my $rs = _zero_fill_buffer($sig_size);
+    my $rs       = _zero_fill_buffer($sig_size);
     _concat_dsa_sig_r_s(\$rs, $r, $s, $sig_size);
 
     return $rs;
@@ -1844,14 +1964,14 @@ sub _calc_dsa_signature {
 ## Calculates signature based on the method and hash
 ##
 sub _calc_ecdsa_signature {
-    my $self                = shift;
-    my $signed_info_canon   = shift;
+    my $self              = shift;
+    my $signed_info_canon = shift;
 
-    print ("    Signing SignedInfo using ECDSA key type\n") if $DEBUG;
+    _log_debug("_calc_ecdsa_signature with $self->{sig_hash}");
 
-    my $bin_signature = $self->{key_obj}->sign_message_rfc7518(
-        $signed_info_canon, uc($self->{sig_hash})
-    );
+    my $bin_signature = $self->{key_obj}
+        ->sign_message_rfc7518($signed_info_canon, uc($self->{sig_hash}));
+
     # The output of the ECDSA algorithm consists of a pair of integers
     # The signature value consists of the base64 encoding of the
     # concatenation of r and s in that order ($r . $s).  In this
@@ -1870,15 +1990,12 @@ sub _calc_ecdsa_signature {
 ## Calculates signature based on the method and hash
 ##
 sub _calc_rsa_signature {
-    my $self                = shift;
-    my $signed_info_canon   = shift;
+    my $self              = shift;
+    my $signed_info_canon = shift;
 
-    print ("    Signing SignedInfo using RSA key type\n") if $DEBUG;
-    my $sig_hash = 'use_' . $self->{ sig_hash } . '_hash';
+    my $sig_hash = 'use_' . $self->{sig_hash} . '_hash';
     $self->{key_obj}->$sig_hash;
-    my $bin_signature = $self->{key_obj}->sign( $signed_info_canon );
-
-    return $bin_signature;
+    return scalar $self->{key_obj}->sign($signed_info_canon);
 }
 
 ##
@@ -1892,22 +2009,22 @@ sub _calc_rsa_signature {
 ## Calculates signature based on the method and hash
 ##
 sub _calc_hmac_signature {
-    my $self                = shift;
-    my $signed_info_canon   = shift;
+    my $self              = shift;
+    my $signed_info_canon = shift;
 
     use Crypt::Mac::HMAC qw( hmac );
     my $bin_signature;
-    print ("    Signing SignedInfo using hmac-", $self->{ sig_hash }, "\n") if $DEBUG;
-    if (my $ref = Digest::SHA->can('hmac_' . $self->{ sig_hash })) {
+    print("    Signing SignedInfo using hmac-", $self->{sig_hash}, "\n")
+        if $DEBUG;
+    if (my $ref = Digest::SHA->can('hmac_' . $self->{sig_hash})) {
         $self->{sig_method} = $ref;
-        $bin_signature = $self->{sig_method} (
-                            $signed_info_canon,
-                            decode_base64( $self->{ hmac_key } )
-                        );
+        $bin_signature = $self->{sig_method}
+            ($signed_info_canon, decode_base64($self->{hmac_key}));
     }
-    elsif ( $ref = Crypt::Digest::RIPEMD160->can($self->{ sig_hash }))  {
+    elsif ($ref = Crypt::Digest::RIPEMD160->can($self->{sig_hash})) {
         $self->{sig_method} = $ref;
-        $bin_signature = hmac('RIPEMD160', decode_base64( $self->{ hmac_key } ), $signed_info_canon );
+        $bin_signature = hmac('RIPEMD160', decode_base64($self->{hmac_key}),
+            $signed_info_canon);
     }
     else {
         die("Can't handle $self->{ sig_hash }");

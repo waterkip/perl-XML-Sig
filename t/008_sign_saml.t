@@ -18,25 +18,24 @@ my $signed_xml = $sig->sign($xml);
 ok($signed_xml, "Signed Successfully");
 my $ret = $sig->verify($signed_xml);
 ok($ret, "RSA: Verifed Successfully");
-ok($sig->signer_cert);
+is($sig->signer_cert->issuer_hash, 'c2312d4e', "Correct signer cert");
 
 # Test signing with a DSA key
 foreach my $key ('t/dsa.private-2048.key', 't/dsa.private-3072.key', 't/dsa.private.key') {
 
+    $XML::Sig::DEBUG = 1;
     my $dsasig = XML::Sig->new({ key => $key });
     my $dsa_signed_xml = $dsasig->sign($xml);
 
+    diag $dsa_signed_xml;
+
     my $dsaret = $dsasig->verify($dsa_signed_xml);
-    ok($dsaret, "XML:Sig DSA: Verifed Successfully");
+    my $ok = ok($dsaret, "XML:Sig DSA: Verified Successfully with $key");
+    next unless $ok;
 
     SKIP: {
         skip "xmlsec1 not installed", 1 unless $xmlsec->{installed};
 
-        # Try whether xmlsec is correctly installed which
-        # doesn't seem to be the case on every cpan testing machine
-
-        my $output = `xmlsec1 --version`;
-        skip "xmlsec1 not correctly installed", 1 if $?;
 
         test_xmlsec1_ok("DSA verify XML:Sig signed with $key: xmlsec1 Response is OK",
             $dsa_signed_xml,

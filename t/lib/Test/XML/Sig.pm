@@ -10,6 +10,7 @@ use Import::Into;
 require Test::More;
 require Test::XML::Sig::Util;
 require Test::Deep;
+require Test::Exception;
 require XML::Sig;
 
 sub import {
@@ -23,6 +24,7 @@ sub import {
         Test::More
         Test::Deep
         XML::Sig
+        Test::Exception
     );
 
     $_->import::into($caller_level) for @imports;

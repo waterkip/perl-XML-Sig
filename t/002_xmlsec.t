@@ -9,9 +9,13 @@ my $lax_key_search = $xmlsec->{lax_key_search} ? '--lax-key-search' :  '';
 my $xml = '<?xml version="1.0"?>'."\n".'<foo ID="XML-SIG_1">'."\n".'    <bar>123</bar>'."\n".'</foo>';
 my $sig = XML::Sig->new( { key => 't/rsa.private.key', cert => 't/rsa.cert.pem' } );
 my $signed = $sig->sign($xml);
+
+# THIS IS A USELESS TEST LIKE THIS
 ok($signed, "XML is signed");
+
 my $sig2 = XML::Sig->new( { key => 't/dsa.private.key' } );
 my $result = $sig2->verify($signed);
+
 ok($result, "XML verified" );
 
 SKIP: {

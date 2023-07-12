@@ -37,8 +37,6 @@ my $oxc = get_xpath(
     'samlp' => 'urn:oasis:names:tc:SAML:2.0:protocol'
 );
 
-diag $xml;
-
 my $uri = qr{http://www.w3.org/2000/09/xmldsig\#};
 
 my $attributes = get_attributes($oxc, '/samlp:Response/saml:Assertion');
@@ -62,7 +60,6 @@ my $sig = XML::Sig->new(
 
 my $signed = $sig->sign($xml);
 
-diag $signed;
 my $xc = get_xpath(
     $signed,                                 'dsig',
     'http://www.w3.org/2000/09/xmldsig#',    'saml',
@@ -81,6 +78,8 @@ $attributes = get_attributes($xc, '/samlp:Response');
 
 ok(!grep ( /dsig/ , @{$names}), 'Did not find dsig in Response');
 ok(!grep ( /$uri/ , @{$uris}), 'Did not find http://www.w3.org/2000/09/xmldsig# in Response');
+
+diag $signed;
 
 sub get_attributes {
     my $xpc   = shift;
