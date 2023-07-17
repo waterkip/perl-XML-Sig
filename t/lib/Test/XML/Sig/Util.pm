@@ -12,6 +12,7 @@ our @EXPORT = qw(
     get_tmp_file
     slurp_file
     test_xmlsec1_ok
+    get_xpath
  );
 
 our @EXPORT_OK;
@@ -23,7 +24,21 @@ our %EXPORT_TAGS = (
 use File::Which;
 use File::Temp;
 use Crypt::OpenSSL::Guess;
+use XML::LibXML;
+use XML::LibXML::XPathContext;
 require Test::More;
+
+sub get_xpath {
+    my ($xml, %ns) = @_;
+
+    my $xp = XML::LibXML::XPathContext->new(
+        XML::LibXML->load_xml(string => $xml)
+    );
+
+    $xp->registerNs($_, $ns{$_}) foreach keys %ns;
+
+    return $xp;
+}
 
 
 sub get_tmp_file {

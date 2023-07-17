@@ -1,9 +1,5 @@
-use strict;
-use warnings;
-use Test::More;
-
-use XML::Sig;
-use XML::LibXML;
+use Test::Lib;
+use Test::XML::Sig;
 
 my $xml = <<'THIRDPARTY';
 <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" Destination="http://localhost:8080/sales-post-sig/" ID="id-icPMMO3R5rLNKh3wK1PfEC24c-QPBDczJZuxVRU3" InResponseTo="ID_8dc4d086-f2eb-4413-aed9-db4512e1ea1c" IssueInstant="2014-10-05T10:32:20Z" Version="2.0">
@@ -34,13 +30,16 @@ my $xml = <<'THIRDPARTY';
 THIRDPARTY
 
 local $XML::LibXML::skipXMLDeclaration = 1;
-my $orig = XML::LibXML->load_xml( string => $xml );
-my $oxc = XML::LibXML::XPathContext->new($orig);
-$oxc->registerNs('dsig', 'http://www.w3.org/2000/09/xmldsig#');
-$oxc->registerNs('saml', 'urn:oasis:names:tc:SAML:2.0:assertion');
-$oxc->registerNs('samlp', 'urn:oasis:names:tc:SAML:2.0:protocol');
+my $oxc = get_xpath(
+    $xml,
+    'dsig'  => 'http://www.w3.org/2000/09/xmldsig#',
+    'saml'  => 'urn:oasis:names:tc:SAML:2.0:assertion',
+    'samlp' => 'urn:oasis:names:tc:SAML:2.0:protocol'
+);
 
-my $uri = qr{http://www.w3.org/2000/09/xmldsig#};
+diag $xml;
+
+my $uri = qr{http://www.w3.org/2000/09/xmldsig\#};
 
 my $attributes = get_attributes($oxc, '/samlp:Response/saml:Assertion');
 my ($names, $uris) = get_namespaces($attributes);
@@ -62,11 +61,14 @@ my $sig = XML::Sig->new(
                     });
 
 my $signed = $sig->sign($xml);
-my $dom = XML::LibXML->load_xml( string => $signed );
-my $xc = XML::LibXML::XPathContext->new($dom);
-$xc->registerNs('dsig', 'http://www.w3.org/2000/09/xmldsig#');
-$xc->registerNs('saml', 'urn:oasis:names:tc:SAML:2.0:assertion');
-$xc->registerNs('samlp', 'urn:oasis:names:tc:SAML:2.0:protocol');
+
+diag $signed;
+my $xc = get_xpath(
+    $signed,                                 'dsig',
+    'http://www.w3.org/2000/09/xmldsig#',    'saml',
+    'urn:oasis:names:tc:SAML:2.0:assertion', 'samlp',
+    'urn:oasis:names:tc:SAML:2.0:protocol'
+);
 
 $attributes = get_attributes($xc, '/samlp:Response/saml:Assertion');
 ($names, $uris) = get_namespaces($attributes);
