@@ -5,7 +5,6 @@ package XML::Sig;
 
 # VERSION
 
-use Encode qw(encode_utf8);
 
 # ABSTRACT: XML::Sig - A toolkit to help sign and verify XML Digital Signatures
 
@@ -69,16 +68,23 @@ XML::Sig->mk_accessors(qw(key));
 
 =cut
 
+use feature qw(state);
+
 use Carp;
 use Crypt::Digest::RIPEMD160 qw/ripemd160/;
 use Crypt::OpenSSL::Bignum;
+use Crypt::OpenSSL::DSA;
 use Crypt::OpenSSL::RSA;
+use Crypt::OpenSSL::X509;
+use Crypt::PK::ECC;
+use CryptX;
 use Digest::SHA
     qw(sha1 sha224 sha256 sha384 sha512 hmac_sha1 hmac_sha256 hmac_sha384 hmac_sha512);
+use Encode qw(encode_utf8);
 use List::Util qw(any none);
 use MIME::Base64;
 use XML::LibXML;
-use feature qw(state);
+use XML::LibXML::XPathContext;
 
 =head1 USAGE
 
@@ -290,20 +296,28 @@ sub new {
     return $self;
 }
 
+sub _slurp {
+    my $file = shift;
+
+    open my $fh, '<', $file or confess "Could not load $file: $!";
+
+    local $/ = undef;
+    my $text = <$fh>;
+    return $text;
+}
+
 sub _load_key {
     my $self = shift;
     my $file = $self->{key};
 
-    open my $KEY, '<', $file or confess "Could not load key $file: $!";
-    local $/ = undef;
-    my $text = <$KEY>;
-    close $KEY;
+    my $text = _slurp($file);
 
     return $self->_load_rsa_key($text)   if $text =~ m/BEGIN RSA PRIVATE KEY/;
     return $self->_load_dsa_key($text)   if $text =~ m/BEGIN DSA PRIVATE KEY/;
     return $self->_load_ecdsa_key($text) if $text =~ m/BEGIN EC PRIVATE KEY/;
     return $self->_load_rsa_key($text)   if $text =~ m/BEGIN PRIVATE KEY/;
     return $self->_load_x509_key($text)  if $text =~ m/BEGIN CERTIFICATE/;
+
     confess "Could not detect type of key $file.";
 }
 
@@ -311,14 +325,9 @@ sub _load_rsa_key {
     my $self = shift;
     my ($key_text) = @_;
 
-    eval { require Crypt::OpenSSL::RSA; };
-    confess
-        "Crypt::OpenSSL::RSA needs to be installed so that we can handle RSA keys."
-        if $@;
-
     my $rsaKey = Crypt::OpenSSL::RSA->new_private_key($key_text);
-
     confess "did not get a new Crypt::OpenSSL::RSA object" unless $rsaKey;
+
     $rsaKey->use_pkcs1_padding();
     $self->{key_obj}  = $rsaKey;
     $self->{key_type} = 'rsa';
@@ -328,12 +337,6 @@ sub _load_rsa_key {
 sub _load_dsa_key {
     my $self     = shift;
     my $key_text = shift;
-
-    eval { require Crypt::OpenSSL::DSA; };
-
-    confess
-        "Crypt::OpenSSL::DSA needs to be installed so that we can handle DSA keys."
-        if $@;
 
     my $dsa_key = Crypt::OpenSSL::DSA->read_priv_key_str($key_text);
     confess "did not get a new Crypt::OpenSSL::RSA object" unless $dsa_key;
@@ -347,12 +350,7 @@ sub _load_ecdsa_key {
     my $self     = shift;
     my $key_text = shift;
 
-    eval { require Crypt::PK::ECC; CryptX->VERSION('0.036'); 1 }
-        or confess "Crypt::PK::ECC 0.036+ needs to be installed so
-             that we can handle ECDSA signatures";
-
     my $ecdsa_key = Crypt::PK::ECC->new(\$key_text);
-
     confess "did not get a new Crypt::PK::ECC object" unless $ecdsa_key;
 
     $self->{key_obj}  = $ecdsa_key;
@@ -364,10 +362,6 @@ sub _load_x509_key {
     my $self     = shift;
     my $key_text = shift;
 
-    eval { require Crypt::OpenSSL::X509; };
-    confess "Crypt::OpenSSL::X509 needs to be installed so that we
-            can handle X509 Certificates." if $@;
-
     my $x509Key = Crypt::OpenSSL::X509->new_private_key($key_text);
     confess "did not get a new Crypt::OpenSSL::X509 object" unless $x509Key;
 
@@ -378,25 +372,15 @@ sub _load_x509_key {
 }
 
 sub _load_cert {
-    my $self = shift;
+    my $self     = shift;
     my $filename = shift;
-
-    open my $CERT, '<', $filename or confess "Could not find certificate file $filename: $!";
-
-    my $text = '';
-    local $/ = undef;
-    $text = <$CERT>;
+    my $text     = _slurp($filename);
     $self->_load_cert_text($text);
     return;
 }
 
 sub _load_cert_text {
     my $self = shift;
-    eval { require Crypt::OpenSSL::X509; };
-    confess
-        "Crypt::OpenSSL::X509 needs to be installed so that we can handle X509 certs."
-        if $@;
-
     my $text = shift;
 
     my $cert = Crypt::OpenSSL::X509->new_from_string($text);
@@ -1262,11 +1246,6 @@ sub _verify_x509 {
     my $self = shift;
     my ($context, $canonical, $sig) = @_;
 
-    eval { require Crypt::OpenSSL::X509; };
-    confess
-        "Crypt::OpenSSL::X509 needs to be installed so that we can handle X509 certificates"
-        if $@;
-
     # Generate Public Key from XML
     my $certificate
         = _trim($self->{parser}->findvalue('dsig:X509Certificate', $context));
@@ -1299,9 +1278,6 @@ sub _verify_x509_cert {
     my $bin_signature = decode_base64($sig);
 
     if ($cert->key_alg_name eq 'id-ecPublicKey') {
-        eval { require Crypt::PK::ECC; CryptX->VERSION('0.036'); 1 }
-            or confess "Crypt::PK::ECC 0.036+ needs to be installed so
-             that we can handle ECDSA signatures";
         my $ecdsa_pub = Crypt::PK::ECC->new(\$cert->pubkey);
 
         my $ecdsa_hash = $self->{rsa_hash};
@@ -1319,9 +1295,6 @@ sub _verify_x509_cert {
         }
     }
     elsif ($cert->key_alg_name eq 'dsaEncryption') {
-        eval { require Crypt::OpenSSL::DSA; };
-        confess "Crypt::OpenSSL::DSA needs to be installed so
-                    that we can handle DSA X509 certificates" if $@;
 
         my $dsa_pub  = Crypt::OpenSSL::DSA->read_pub_key_str($cert->pubkey);
         my $sig_size = ($dsa_pub->get_sig_size - 8) / 2;
@@ -1341,10 +1314,6 @@ sub _verify_x509_cert {
         }
     }
     else {
-        eval { require Crypt::OpenSSL::RSA; };
-        confess "Crypt::OpenSSL::RSA needs to be installed so
-                    that we can handle X509 certificates" if $@;
-
         my $rsa_pub = Crypt::OpenSSL::RSA->new_public_key($cert->pubkey);
 
         my $sig_hash = 'use_' . $self->{sig_hash} . '_hash';
@@ -1427,10 +1396,6 @@ sub _concat_dsa_sig_r_s {
 sub _verify_dsa {
     my $self = shift;
     my ($context, $canonical, $sig) = @_;
-
-    eval { require Crypt::OpenSSL::DSA; };
-    confess "Crypt::OpenSSL::DSA needs to be installed so
-                    that we can handle DSA signatures" if $@;
 
     # Generate Public Key from XML
     my $p

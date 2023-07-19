@@ -8,7 +8,7 @@ isa_ok($sig, 'XML::Sig');
 
 throws_ok(
     sub { $sig = XML::Sig->new({ key => 'foobar' }) },
-    qr/Could not load key foobar: No such file or directory/,
+    qr/Could not load foobar: No such file or directory/,
     'new shoud die when it cannot find the private key'
 );
 

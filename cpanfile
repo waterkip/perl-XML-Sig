@@ -8,29 +8,28 @@ requires "Crypt::OpenSSL::Bignum" => "0";
 requires "Crypt::OpenSSL::DSA" => "0.20";
 requires "Crypt::OpenSSL::RSA" => "0";
 requires "Crypt::OpenSSL::X509" => "0";
+requires "Crypt::PK::ECC" => "0";
 requires "CryptX" => "0.036";
 requires "Digest::SHA" => "0";
 requires "Encode" => "0";
+requires "List::Util" => "0";
 requires "MIME::Base64" => "0";
 requires "URI" => "0";
 requires "XML::LibXML" => "0";
-requires "base" => "0";
-requires "constant" => "0";
-requires "perl" => "5.008";
-requires "strict" => "0";
-requires "vars" => "0";
-requires "warnings" => "0";
+requires "XML::LibXML::XPathContext" => "0";
+requires "perl" => "5.010";
 
 on 'test' => sub {
   requires "Crypt::OpenSSL::Guess" => "0";
-  requires "Exporter" => "0";
   requires "File::Spec::Functions" => "0";
   requires "File::Temp" => "0";
   requires "File::Which" => "0";
   requires "Import::Into" => "0";
+  requires "Test::Deep" => "0";
   requires "Test::Exception" => "0";
   requires "Test::Lib" => "0";
   requires "Test::More" => "0";
+  requires "URN::OASIS::SAML2" => "0";
 };
 
 on 'configure' => sub {

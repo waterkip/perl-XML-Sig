@@ -196,6 +196,26 @@ USAGE
 
     Returns: Crypt::OpenSSL::X509: Certificate used to sign the XML
 
+  get_key_info
+    Returns the XML::LibXML::Element for the KeyInfo section of the
+    Signature
+
+  get_ecda_key
+    Returns the XML::LibXML::Element for the KeyInfo section of the
+    Signature when we have an edsa key
+
+  get_dsa_key
+    Returns the XML::LibXML::Element for the KeyInfo section of the
+    Signature when we have an DSA key
+
+  get_rsa_key
+    Returns the XML::LibXML::Element for the KeyInfo section of the
+    Signature when we have a RSA key
+
+  get_hmac_key
+    Returns the XML::LibXML::Element for the KeyInfo section of the
+    Signature when we have a HMAC key
+
 ABOUT DIGITAL SIGNATURES
     Just as one might want to send an email message that is
     cryptographically signed in order to give the recipient the means to
@@ -309,13 +329,13 @@ COPYRIGHT AND LICENSE
     This software is copyright (c) 2023 by Byrne Reese, Chris Andrews and
     Others; in detail:
 
-      Copyright 2009       Byrne, Michael Hendricks
+      Copyright 2009       Byrne Reese, Michael Hendricks
                 2010       Chris Andrews
                 2011       Chris Andrews, Oskari Okko Ojala
                 2012       Chris Andrews, Peter Marschall
                 2015       Mike Wisener
                 2016       Jeff Fearn
-                2017       Mike Wisener, xmikew
+                2017       Mike Wisener
                 2019-2021  Timothy Legge
                 2022-2023  Timothy Legge, Wesley Schwengle
 

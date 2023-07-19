@@ -1,7 +1,7 @@
 use strict;
 use warnings;
 
-use 5.008;
+use 5.010;
 
 use ExtUtils::MakeMaker;
 
@@ -13,7 +13,7 @@ my %WriteMakefileArgs = (
   },
   "DISTNAME" => "XML-Sig",
   "LICENSE" => "perl",
-  "MIN_PERL_VERSION" => "5.008",
+  "MIN_PERL_VERSION" => "5.010",
   "NAME" => "XML::Sig",
   "PREREQ_PM" => {
     "Carp" => 0,
@@ -24,28 +24,27 @@ my %WriteMakefileArgs = (
     "Crypt::OpenSSL::DSA" => "0.20",
     "Crypt::OpenSSL::RSA" => 0,
     "Crypt::OpenSSL::X509" => 0,
+    "Crypt::PK::ECC" => 0,
     "CryptX" => "0.036",
     "Digest::SHA" => 0,
     "Encode" => 0,
+    "List::Util" => 0,
     "MIME::Base64" => 0,
     "URI" => 0,
     "XML::LibXML" => 0,
-    "base" => 0,
-    "constant" => 0,
-    "strict" => 0,
-    "vars" => 0,
-    "warnings" => 0
+    "XML::LibXML::XPathContext" => 0
   },
   "TEST_REQUIRES" => {
     "Crypt::OpenSSL::Guess" => 0,
-    "Exporter" => 0,
     "File::Spec::Functions" => 0,
     "File::Temp" => 0,
     "File::Which" => 0,
     "Import::Into" => 0,
+    "Test::Deep" => 0,
     "Test::Exception" => 0,
     "Test::Lib" => 0,
-    "Test::More" => 0
+    "Test::More" => 0,
+    "URN::OASIS::SAML2" => 0
   },
   "VERSION" => "0.65",
   "test" => {
@@ -64,25 +63,24 @@ my %FallbackPrereqs = (
   "Crypt::OpenSSL::Guess" => 0,
   "Crypt::OpenSSL::RSA" => 0,
   "Crypt::OpenSSL::X509" => 0,
+  "Crypt::PK::ECC" => 0,
   "CryptX" => "0.036",
   "Digest::SHA" => 0,
   "Encode" => 0,
-  "Exporter" => 0,
   "File::Spec::Functions" => 0,
   "File::Temp" => 0,
   "File::Which" => 0,
   "Import::Into" => 0,
+  "List::Util" => 0,
   "MIME::Base64" => 0,
+  "Test::Deep" => 0,
   "Test::Exception" => 0,
   "Test::Lib" => 0,
   "Test::More" => 0,
   "URI" => 0,
+  "URN::OASIS::SAML2" => 0,
   "XML::LibXML" => 0,
-  "base" => 0,
-  "constant" => 0,
-  "strict" => 0,
-  "vars" => 0,
-  "warnings" => 0
+  "XML::LibXML::XPathContext" => 0
 );
 
 
