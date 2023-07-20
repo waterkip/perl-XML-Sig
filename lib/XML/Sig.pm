@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 package XML::Sig;
+use Smart::Comments;
 
 # VERSION
 
@@ -396,13 +397,6 @@ sub _load_hmac_key {
     return 1;
 }
 
-sub _log_debug {
-    return unless $DEBUG;
-    my $msg = shift;
-    print STDERR ("$msg\n");
-}
-
-
 =head3 B<sign($xml)>
 
 When given a string of XML, it will return the same string with a signature
@@ -478,10 +472,12 @@ sub sign_node {
     my $root = $d->createElementNS($self->{namespace}{dsig}, 'dsig:Signature');
 
     my $si = $d->createElement('dsig:SignedInfo');
+    $si->setNamespace($self->{namespace}{dsig}, "dsig", 0);
     $root->addChild($si);
 
     ## TODO: add dsig and xenc namespaces to this node
     my $cm = $d->createElement('dsig:CanonicalizationMethod');
+    ## TODO: Add algo in constructor
     $cm->setAttribute('Algorithm', 'http://www.w3.org/2001/10/xml-exc-c14n#');
     my $sm = $d->createElement('dsig:SignatureMethod');
     $sm->setAttribute('Algorithm', $self->get_signing_hash_algo);
@@ -492,12 +488,14 @@ sub sign_node {
     my $signid = $node->getAttribute('ID');
 
     my $ref = $d->createElement('dsig:Reference');
+    $ref->setNamespace($self->{namespace}{dsig}, "dsig", 0);
     $si->addChild($ref);
 
     $ref->setAttribute(URI => "#$signid");
     my $t = $d->createElement('dsig:Transforms');
     $ref->addChild($t);
 
+    ## TODO: Add algo in constructor
     my @algos = (
         'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
         'http://www.w3.org/2001/10/xml-exc-c14n#'
@@ -514,7 +512,7 @@ sub sign_node {
 
     my $tbs = $self->canonicalize_node($node, $namespaces, @algos);
 
-    _log_debug("Canonicalize XML: $tbs");
+    ### Canonicalize XML: $tbs
 
     my $digest = $self->calculate_digest($tbs);
     my $dv = $d->createElement('dsig:DigestValue');
@@ -530,24 +528,21 @@ sub sign_node {
         $root->addChild($key_node);
     }
 
-    $si->setNamespace($self->{namespace}{dsig}, "dsig", 0);
-
-    _log_debug("SignedInfo: " . $si->toString(2));
+    ### SignedInfo: $si->toString(2)
 
     my $sc = $self->canonicalize_node($si, $namespaces, @algos);
-    _log_debug("SignedInfo (Canonicalize): $sc");
+
+    ### SignedInfo (Canonicalize): $sc
 
     my $sig_method = sprintf('_calc_%s_signature', $self->{key_type});
 
-    my $signature = encode_base64($self->$sig_method($sc), "\n");
+    my $signature = encode_base64($self->$sig_method($sc), "");
 
-    _log_debug("Signature with $self->{key_type} $sig_method\n: $signature");
+    ### Signature with $self->{key_type} $sig_method: $signature
 
     $sv->appendText($signature);
-    $ref->setNamespace($self->{namespace}{dsig}, "dsig", 0);
 
     $node->addChild($root);
-
 }
 
 sub _calc_x509cert_signature {
@@ -1932,7 +1927,7 @@ sub _calc_ecdsa_signature {
     my $self              = shift;
     my $signed_info_canon = shift;
 
-    _log_debug("_calc_ecdsa_signature with $self->{sig_hash}");
+    ### _calc_ecdsa_signature with $self->{sig_hash}
 
     my $bin_signature = $self->{key_obj}
         ->sign_message_rfc7518($signed_info_canon, uc($self->{sig_hash}));
